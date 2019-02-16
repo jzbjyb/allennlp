@@ -230,7 +230,6 @@ class OpenIePredictor(Predictor):
         outputs, probs = [], []
         for b in range(0, len(instances), batch_size):
             batch_inst = instances[b:b+batch_size]
-            print(b)
             for prediction in self._model.forward_on_instances(batch_inst):
                 outputs.append([sanitize_label(label) for label in prediction['tags']])
                 probs.append(prediction['probs'])
