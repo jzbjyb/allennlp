@@ -9,6 +9,7 @@ from allennlp.models import Model
 from allennlp.predictors.predictor import Predictor
 from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
 from allennlp.data.tokenizers import Token
+import spacy
 
 def join_mwp(tags: List[str]) -> List[str]:
     """
@@ -129,18 +130,25 @@ def merge_overlapping_predictions(tags1: List[str], tags2: List[str]) -> List[st
         ret_sequence.append(cur_tag)
     return ret_sequence
 
-def consolidate_predictions(outputs: List[List[str]], sent_tokens: List[Token]) -> Dict[str, List[str]]:
+def consolidate_predictions(outputs: List[List[str]], sent_tokens: List[Token],
+                            probs: List[List[float]] = None) -> Dict[str, List[str]]:
     """
     Identify that certain predicates are part of a multiword predicate
     (e.g., "decided to run") in which case, we don't need to return
     the embedded predicate ("run").
     """
     pred_dict: Dict[str, List[str]] = {}
+    pred_dict_wp: Dict[str, (List[str], List[float])] = {}
     merged_outputs = [join_mwp(output) for output in outputs]
     predicate_texts = [get_predicate_text(sent_tokens, tags)
                        for tags in merged_outputs]
+    if probs is None:
+        probs = [None] * len(predicate_texts)
 
-    for pred1_text, tags1 in zip(predicate_texts, merged_outputs):
+    assert len(predicate_texts) == len(merged_outputs) and \
+           len(predicate_texts) == len(probs), 'length not equal'
+
+    for pred1_text, tags1, prob in zip(predicate_texts, merged_outputs, probs):
         # A flag indicating whether to add tags1 to predictions
         add_to_prediction = True
 
@@ -154,8 +162,12 @@ def consolidate_predictions(outputs: List[List[str]], sent_tokens: List[Token]) 
         # This predicate doesn't overlap - add as a new predicate
         if add_to_prediction:
             pred_dict[pred1_text] = tags1
+            if prob is not None:
+                pred_dict_wp[pred1_text] = (tags1, prob)
+            else:
+                pred_dict_wp[pred1_text] = tags1
 
-    return pred_dict
+    return pred_dict_wp
 
 
 def sanitize_label(label: str) -> str:
@@ -181,6 +193,7 @@ class OpenIePredictor(Predictor):
                  dataset_reader: DatasetReader) -> None:
         super().__init__(model, dataset_reader)
         self._tokenizer = WordTokenizer(word_splitter=SpacyWordSplitter(pos_tags=True))
+        self.nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
 
 
     def _json_to_instance(self, json_dict: JsonDict) -> Instance:
@@ -194,6 +207,59 @@ class OpenIePredictor(Predictor):
         verb_labels = [0 for _ in tokens]
         verb_labels[predicate_index] = 1
         return self._dataset_reader.text_to_instance(tokens, verb_labels)
+
+
+    def _tag_tokens(self, tokens):
+        tag = self.nlp.tagger(self.nlp.tokenizer.tokens_from_list(tokens))
+        return tag
+
+
+    def predict_batch(self, sents: List[List[str]], batch_size: int = 256) -> JsonDict:
+        sents_token = [self._tag_tokens(sent) for sent in sents]
+
+        instances, insts_st, insts_ed = [], [], []
+        # Find all verbs in the input sentence
+        for sent_token in sents_token:
+            pred_ids = [i for (i, t) in enumerate(sent_token) if t.pos_ == 'VERB']
+            insts_st.append(len(instances))
+            instances.extend([self._json_to_instance(
+                {'sentence': sent_token, 'predicate_index': pid}) for pid in pred_ids])
+            insts_ed.append(len(instances))
+
+        # Run model
+        outputs, probs = [], []
+        for b in range(0, len(instances), batch_size):
+            batch_inst = instances[b:b+batch_size]
+            print(b)
+            for prediction in self._model.forward_on_instances(batch_inst):
+                outputs.append([sanitize_label(label) for label in prediction['tags']])
+                probs.append(prediction['probs'])
+
+        results_li = []
+        for sent_token, st, ed in zip(sents_token, insts_st, insts_ed):
+            # Consolidate predictions
+            pred_dict = consolidate_predictions(outputs[st:ed], sent_token, probs[st:ed])
+            # Build and return output dictionary
+            results = {'verbs': [], 'words': [token.text for token in sent_token]}
+
+            for tags, prob in pred_dict.values():
+                # Join multi-word predicates
+                tags = join_mwp(tags)
+
+                # Create description text
+                description = make_oie_string(sent_token, tags)
+
+                # Add a predicate prediction to the return dictionary.
+                results['verbs'].append({
+                    'verb': get_predicate_text(sent_token, tags),
+                    'description': description,
+                    'tags': tags,
+                    'probs': prob,
+                })
+            results_li.append(results)
+
+        return sanitize(results_li)
+
 
     @overrides
     def predict_json(self, inputs: JsonDict) -> JsonDict:

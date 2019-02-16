@@ -175,13 +175,18 @@ class SemanticRoleLabeler(Model):
         else:
             predictions_list = [all_predictions]
         all_tags = []
+        all_probs = []
         transition_matrix = self.get_viterbi_pairwise_potentials()
         for predictions, length in zip(predictions_list, sequence_lengths):
-            max_likelihood_sequence, _ = viterbi_decode(predictions[:length], transition_matrix)
+            max_likelihood_sequence, score = viterbi_decode(predictions[:length], transition_matrix)
+            probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
+                     for i in range(len(max_likelihood_sequence))]
+            all_probs.append(probs)
             tags = [self.vocab.get_token_from_index(x, namespace="labels")
                     for x in max_likelihood_sequence]
             all_tags.append(tags)
         output_dict['tags'] = all_tags
+        output_dict['probs'] = all_probs
         return output_dict
 
     def get_metrics(self, reset: bool = False):

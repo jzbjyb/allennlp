@@ -7,7 +7,6 @@ from typing import List
 import logging
 from pprint import pprint
 from pprint import pformat
-from docopt import docopt
 from collections import defaultdict
 from operator import itemgetter
 from collections import namedtuple
@@ -16,6 +15,7 @@ from tqdm import tqdm
 from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
 from allennlp.data.tokenizers import WordTokenizer
 import argparse
+import spacy
 
 Extraction = namedtuple("Extraction",  # Open IE extraction
                         ["sent",       # Sentence in which this extraction appears
@@ -31,6 +31,7 @@ Element = namedtuple("Element",    # An element (predicate or argument) in an Op
                       "span",      # The element's character span in the sentence
                       "text"]      # The textual representation of this element
 )
+nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
 
 def main(inp_fn: str,
          domain: str,
@@ -197,7 +198,6 @@ def parse_element(raw_element: str) -> List[Element]:
 
 
 def read(fn: str) -> List[Extraction]:
-    tokenizer = WordTokenizer(word_splitter = SpacyWordSplitter(pos_tags=True))
     prev_sent = []
 
     with open(fn) as fin:
@@ -216,8 +216,11 @@ def read(fn: str) -> List[Extraction]:
                 (len(arg1) == 1) and \
                 (len(args2) >= 1)):
                 sent = data[5]
+                tokens = nlp.tokenizer.tokens_from_list(sent.split(' '))
+                tokens = nlp.tagger(tokens)
                 cur_ex = Extraction(sent = sent,
-                                    toks = tokenizer.tokenize(sent),
+                                    #toks = tokenizer.tokenize(sent),
+                                    toks = tokens,
                                     arg1 = arg1[0],
                                     rel = rel[0],
                                     args2 = args2,
