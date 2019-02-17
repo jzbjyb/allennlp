@@ -214,7 +214,7 @@ class OpenIePredictor(Predictor):
         return tag
 
 
-    def predict_batch(self, sents: List[List[str]], batch_size: int = 256) -> JsonDict:
+    def predict_batch(self, sents: List[List[str]], batch_size: int = 256, warm_up: int = 0) -> JsonDict:
         sents_token = [self._tag_tokens(sent) for sent in sents]
 
         instances, insts_st, insts_ed = [], [], []
@@ -226,6 +226,11 @@ class OpenIePredictor(Predictor):
                 {'sentence': sent_token, 'predicate_index': pid}) for pid in pred_ids])
             insts_ed.append(len(instances))
 
+        # Warm up the model using warm_up batch (mainly because of non-determinism of ELMO).
+        if warm_up:
+            for b in range(0, warm_up * batch_size, batch_size):
+                batch_inst = instances[b:b + batch_size]
+                self._model.forward_on_instances(batch_inst)
         # Run model
         outputs, probs = [], []
         for b in range(0, len(instances), batch_size):

@@ -75,7 +75,7 @@ if __name__ == '__main__':
     arc = load_archive(args.model, cuda_device=args.cuda_device)
     predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
     sents_tokens = read_raw_sents(args.inp)
-    preds = predictor.predict_batch(sents_tokens, batch_size=256)
+    preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
     exts = allennlp_prediction_to_extraction(preds, max_n_arg=10)
     with open(args.out, 'w') as fout:
         for ext in exts:
