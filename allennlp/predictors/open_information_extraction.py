@@ -228,7 +228,7 @@ class OpenIePredictor(Predictor):
 
         # Warm up the model using warm_up batch (mainly because of non-determinism of ELMO).
         if warm_up:
-            for b in range(0, warm_up * batch_size, batch_size):
+            for b in range(0, min(warm_up * batch_size, len(instances)), batch_size):
                 batch_inst = instances[b:b + batch_size]
                 self._model.forward_on_instances(batch_inst)
         # Run model

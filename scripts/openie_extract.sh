@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#SBATCH --mem=10000
+#SBATCH --gres=gpu:1
+
 model=$1
 out_dir=$2
 
