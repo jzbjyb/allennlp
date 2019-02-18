@@ -1,0 +1,1 @@
+from multitask.models.semantic_role_labeler_mt import SemanticRoleLabelerMultiTask

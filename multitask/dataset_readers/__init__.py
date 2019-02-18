@@ -1,0 +1,1 @@
+from multitask.dataset_readers.semantic_role_labeling_mt import SrlReaderMultiTask

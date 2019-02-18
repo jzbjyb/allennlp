@@ -2,10 +2,11 @@ import logging
 from typing import Dict, List, Iterable
 
 from overrides import overrides
+from operator import itemgetter
 
 from allennlp.common.file_utils import cached_path
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
-from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataField
+from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataField, LabelField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
@@ -15,8 +16,8 @@ from allennlp.data.dataset_readers.dataset_utils import Ontonotes, OntonotesSent
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-@DatasetReader.register("srl")
-class SrlReader(DatasetReader):
+@DatasetReader.register("srl_mt")
+class SrlReaderMultiTask(DatasetReader):
     """
     This DatasetReader is designed to read in the English OntoNotes v5.0 data
     for semantic role labelling. It returns a dataset of instances with the
@@ -68,9 +69,18 @@ class SrlReader(DatasetReader):
                 verb_label = [0 for _ in tokens]
                 yield self.text_to_instance(tokens, verb_label, tags)
             else:
-                for (_, tags) in sentence.srl_frames:
+                for (_, tts) in sentence.srl_frames:
+                    # "#" is used to separate tag and task (for example, "ARG0#openie4")
+                    tags, tasks = [], []
+                    for tt in tts:
+                        tt = tt.split('#')
+                        if len(tt) != 1:
+                            raise ValueError('tag is not valid multi-task format')
+                        tags.append(tt[0])
+                        #tasks.append(tt[1])
+                        tasks.append('gt')
                     verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
-                    yield self.text_to_instance(tokens, verb_indicator, tags)
+                    yield self.text_to_instance(tokens, verb_indicator, tasks[0], tags)
 
     @staticmethod
     def _ontonotes_subset(ontonotes_reader: Ontonotes,
@@ -88,6 +98,7 @@ class SrlReader(DatasetReader):
     def text_to_instance(self,  # type: ignore
                          tokens: List[Token],
                          verb_label: List[int],
+                         task: str,
                          tags: List[str] = None) -> Instance:
         """
         We take `pre-tokenized` input here, along with a verb label.  The verb label should be a
@@ -99,6 +110,7 @@ class SrlReader(DatasetReader):
         text_field = TextField(tokens, token_indexers=self._token_indexers)
         fields['tokens'] = text_field
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
+        fields['task'] = LabelField(task, label_namespace='task')
         if tags:
             fields['tags'] = SequenceLabelField(tags, text_field)
 
