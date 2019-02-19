@@ -17,6 +17,9 @@ from allennlp.data.tokenizers import WordTokenizer
 import argparse
 import spacy
 
+class OverlapError(Exception):
+    pass
+
 Extraction = namedtuple("Extraction",  # Open IE extraction
                         ["sent",       # Sentence in which this extraction appears
                          "toks",       # spaCy toks
@@ -126,6 +129,7 @@ def extraction_to_conll(ex: Extraction) -> List[str]:
     ex = split_predicate(ex)
     toks = ex.sent.split(' ')
     ret = ['*'] * len(toks)
+    ret_touched = [False] * len(toks)
     args = [ex.arg1] + ex.args2
     rels_and_args = [("ARG{}".format(arg_ind), arg)
                      for arg_ind, arg in enumerate(args)] + \
@@ -139,11 +143,17 @@ def extraction_to_conll(ex: Extraction) -> List[str]:
                                            ex.sent)
         cur_end_ind = char_to_word_index(arg.span[1],
                                          ex.sent)
+        if ret_touched[cur_start_ind] or ret_touched[cur_end_ind]:
+            # no overlap allowed
+            raise OverlapError
         if ex.task is None:
             ret[cur_start_ind] = "({}{}".format(rel, ret[cur_start_ind])
+            ret_touched[cur_start_ind] = True
         else:
             ret[cur_start_ind] = "({}#{}{}".format(rel, ex.task, ret[cur_start_ind])
+            ret_touched[cur_start_ind] = True
         ret[cur_end_ind] += ')'
+        ret_touched[cur_end_ind] = True
     return ret
 
 def interpret_span(text_spans: str) -> List[int]:
@@ -215,6 +225,7 @@ def read(fn: str, task=None) -> List[Extraction]:
 
     with open(fn) as fin:
         for line in tqdm(fin):
+            line = line.replace('\xa0', ' ') # a bug found in stanford openie
             data = line.strip().split('\t')
             confidence = data[0]
             if not all(data[2:5]):
@@ -260,10 +271,13 @@ def convert_sent_to_conll(sent_ls: List[Extraction]):
     assert(len(set([ex.sent for ex in sent_ls])) == 1)
     toks = sent_ls[0].sent.split(' ')
 
-    return safe_zip(*[range(len(toks)),
-                      toks] + \
-                    [extraction_to_conll(ex)
-                     for ex in sent_ls])
+    try:
+        return safe_zip(*[range(len(toks)),
+                          toks] + \
+                        [extraction_to_conll(ex)
+                         for ex in sent_ls])
+    except OverlapError:
+        return []
 
 
 def pad_line_to_ontonotes(line, domain) -> List[str]:

@@ -78,6 +78,7 @@ class SrlReaderMultiTask(DatasetReader):
                     for tt in tts:
                         tt = tt.split('#')
                         if len(tt) > 2:
+                            print(tt)
                             raise ValueError('tag is not valid multi-task format')
                         tags.append(tt[0])
                         if len(tt) == 2:
@@ -85,8 +86,9 @@ class SrlReaderMultiTask(DatasetReader):
                     verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
                     task = tasks[0] if len(tasks) > 0 else None
                     if not task:
-                        raise ValueError('no task found') # all of the tags don't contain task information
-                    if len(np.unique(tasks)) != 1:
+                        pass
+                        #raise ValueError('no task found') # all of the tags don't contain task information
+                    elif len(np.unique(tasks)) != 1:
                         raise ValueError('inconsistent task')
                     yield self.text_to_instance(tokens, verb_indicator, task=task, tags=tags)
 
