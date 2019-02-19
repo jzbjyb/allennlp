@@ -28,14 +28,7 @@
         {
           "type": "orthogonal"
         }
-      ],
-      [
-        "^((?!tag_projection_layer).)*$",
-        {
-          "type": "pretrained",
-          "weights_file_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/weights.th"
-        }
-       ]
+      ]
     ],
     "encoder": {
       "type": "alternating_lstm",

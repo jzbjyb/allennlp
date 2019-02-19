@@ -28,20 +28,13 @@
         {
           "type": "orthogonal"
         }
-      ],
-      [
-        "^((?!tag_projection_layer).)*$",
-        {
-          "type": "pretrained",
-          "weights_file_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/weights.th"
-        }
-       ]
+      ]
     ],
     "encoder": {
       "type": "alternating_lstm",
       "input_size": 1124,
-      "hidden_size": 300,
-      "num_layers": 8,
+      "hidden_size": 64,
+      "num_layers": 4,
       "recurrent_dropout_probability": 0.1,
       "use_input_projection_bias": false
     },
@@ -54,9 +47,9 @@
     "batch_size" : 80
   },
   "trainer": {
-    "num_epochs": 100,
+    "num_epochs": 200,
     "grad_clipping": 1.0,
-    "patience": 5,
+    "patience": 10,
     "num_serialized_models_to_keep": 10,
     "validation_metric": "+f1-measure-overall",
     "cuda_device": 0,

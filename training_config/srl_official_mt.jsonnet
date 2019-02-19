@@ -2,17 +2,18 @@
 //   He, Luheng et al. “Deep Semantic Role Labeling: What Works and What's Next.” ACL (2017).
 {
   "dataset_reader": {
-    "type": "srl",
+    "type": "srl_mt",
+    "default_task": "gt",
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     }
   },
   //"train_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/train/",
-  "train_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/train",
+  "train_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/train_mt",
   //"validation_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/development/",
   "validation_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/dev",
   "model": {
-    "type": "srl",
+    "type": "srl_mt",
     "text_field_embedder": {
       "elmo": {
         "type": "elmo_token_embedder",
@@ -24,18 +25,11 @@
     },
     "initializer": [
       [
-        "tag_projection_layer.*weight",
+        "tag_projection_layer_mt.*weight",
         {
           "type": "orthogonal"
         }
-      ],
-      [
-        "^((?!tag_projection_layer).)*$",
-        {
-          "type": "pretrained",
-          "weights_file_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/weights.th"
-        }
-       ]
+      ]
     ],
     "encoder": {
       "type": "alternating_lstm",
@@ -65,7 +59,7 @@
       "rho": 0.95
     }
   },
-  "vocabulary": {
-    "directory_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/vocabulary_for_openie_finetune/"
-  }
+  //"vocabulary": {
+  //  "directory_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/vocabulary_for_openie_finetune_mt/"
+  //}
 }
