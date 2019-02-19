@@ -23,6 +23,7 @@ Extraction = namedtuple("Extraction",  # Open IE extraction
                          "arg1",       # Subject
                          "rel",        # Relation
                          "args2",      # A list of arguments after the predicate
+                         "task",       # for multi task learning
                          "confidence"] # Confidence in this extraction
 )
 
@@ -35,7 +36,8 @@ nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
 
 def main(inp_fn: str,
          domain: str,
-         out_fn: str) -> None:
+         out_fn: str,
+         task: str) -> None:
     """
     inp_fn: str, required.
        Path to file from which to read Open IE extractions in Open IE4's format.
@@ -44,13 +46,21 @@ def main(inp_fn: str,
     out_fn: str, required.
        Path to file to which to write the CoNLL format Open IE extractions.
     """
+    inp_fn_li = inp_fn.split(':')
+    if task is None:
+        task_li = [None] * len(inp_fn_li)
+    else:
+        task_li = task.split(':')
+    assert len(inp_fn_li) == len(task_li), 'should have the same length'
     with open(out_fn, 'w') as fout:
-        for sent_ls in read(inp_fn):
-            fout.write("{}\n\n".format('\n'.join(['\t'.join(map(str,
-                                                                pad_line_to_ontonotes(line,
-                                                                                      domain)))
-                                                  for line
-                                                  in convert_sent_to_conll(sent_ls)])))
+        for inp_fn, task in zip(inp_fn_li, task_li):
+            print('file {} with task {}'.format(inp_fn, task))
+            for sent_ls in read(inp_fn, task):
+                fout.write("{}\n\n".format('\n'.join(['\t'.join(map(str,
+                                                                    pad_line_to_ontonotes(line,
+                                                                                          domain)))
+                                                      for line
+                                                      in convert_sent_to_conll(sent_ls)])))
 
 def safe_zip(*args):
     """
@@ -107,7 +117,7 @@ def split_predicate(ex: Extraction) -> Extraction:
     if after_verb:
         rel_parts.append(element_from_span(after_verb, "AV"))
 
-    return Extraction(ex.sent, ex.toks, ex.arg1, rel_parts, ex.args2, ex.confidence)
+    return Extraction(ex.sent, ex.toks, ex.arg1, rel_parts, ex.args2, ex.task, ex.confidence)
 
 def extraction_to_conll(ex: Extraction) -> List[str]:
     """
@@ -129,7 +139,10 @@ def extraction_to_conll(ex: Extraction) -> List[str]:
                                            ex.sent)
         cur_end_ind = char_to_word_index(arg.span[1],
                                          ex.sent)
-        ret[cur_start_ind] = "({}{}".format(rel, ret[cur_start_ind])
+        if ex.task is None:
+            ret[cur_start_ind] = "({}{}".format(rel, ret[cur_start_ind])
+        else:
+            ret[cur_start_ind] = "({}#{}{}".format(rel, ex.task, ret[cur_start_ind])
         ret[cur_end_ind] += ')'
     return ret
 
@@ -197,7 +210,7 @@ def parse_element(raw_element: str) -> List[Element]:
             if elem]
 
 
-def read(fn: str) -> List[Extraction]:
+def read(fn: str, task=None) -> List[Extraction]:
     prev_sent = []
 
     with open(fn) as fin:
@@ -224,6 +237,7 @@ def read(fn: str) -> List[Extraction]:
                                     arg1 = arg1[0],
                                     rel = rel[0],
                                     args2 = args2,
+                                    task=task,
                                     confidence = confidence)
 
 
@@ -277,9 +291,10 @@ def convert_sent_dict_to_conll(sent_dic, domain) -> str:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert Open IE4 extractions to CoNLL (ontonotes) format.")
-    parser.add_argument("--inp", type=str, help="input file from which to read Open IE extractions.", required = True)
+    parser.add_argument("--inp", type=str, help="input file from which to read Open IE extractions (separated by :)", required = True)
     parser.add_argument("--domain", type=str, help="domain to use when writing the ontonotes file.", required = True)
     parser.add_argument("--out", type=str, help="path to the output file, where CoNLL format should be written.", required = True)
+    parser.add_argument("--task", type=str, help="task of each input file (separated by :).", default=None)
     args = parser.parse_args()
-    main(args.inp, args.domain, args.out)
+    main(args.inp, args.domain, args.out, args.task)
 

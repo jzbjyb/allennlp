@@ -3,6 +3,7 @@ from typing import Dict, List, Iterable
 
 from overrides import overrides
 from operator import itemgetter
+import numpy as np
 
 from allennlp.common.file_utils import cached_path
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
@@ -45,10 +46,12 @@ class SrlReaderMultiTask(DatasetReader):
 
     """
     def __init__(self,
+                 default_task = 'gt', # "gt" is the default task (ground truth)
                  token_indexers: Dict[str, TokenIndexer] = None,
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
         super().__init__(lazy)
+        self._default_task = default_task
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
 
@@ -74,12 +77,18 @@ class SrlReaderMultiTask(DatasetReader):
                     tags, tasks = [], []
                     for tt in tts:
                         tt = tt.split('#')
-                        if len(tt) != 2:
+                        if len(tt) > 2:
                             raise ValueError('tag is not valid multi-task format')
                         tags.append(tt[0])
-                        tasks.append(tt[1])
+                        if len(tt) == 2:
+                            tasks.append(tt[1])
                     verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
-                    yield self.text_to_instance(tokens, verb_indicator, tasks[0], tags)
+                    task = tasks[0] if len(tasks) > 0 else None
+                    if not task:
+                        raise ValueError('no task found') # all of the tags don't contain task information
+                    if len(np.unique(tasks)) != 1:
+                        raise ValueError('inconsistent task')
+                    yield self.text_to_instance(tokens, verb_indicator, task=task, tags=tags)
 
     @staticmethod
     def _ontonotes_subset(ontonotes_reader: Ontonotes,
@@ -97,7 +106,7 @@ class SrlReaderMultiTask(DatasetReader):
     def text_to_instance(self,  # type: ignore
                          tokens: List[Token],
                          verb_label: List[int],
-                         task: str = 'gt', # "gt" is the default task (ground truth)
+                         task: str = None,
                          tags: List[str] = None) -> Instance:
         """
         We take `pre-tokenized` input here, along with a verb label.  The verb label should be a
@@ -109,6 +118,7 @@ class SrlReaderMultiTask(DatasetReader):
         text_field = TextField(tokens, token_indexers=self._token_indexers)
         fields['tokens'] = text_field
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
+        task = task or self._default_task
         fields['task_labels'] = LabelField(task, label_namespace='task_labels')
         if tags:
             fields['tags'] = SequenceLabelField(tags, text_field)
