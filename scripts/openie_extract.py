@@ -1,9 +1,11 @@
 import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(__file__, '../..')))
+root_dir = os.path.abspath(os.path.join(__file__, '../..'))
+sys.path.insert(0, root_dir)
 import argparse
 from functools import reduce
 from allennlp.predictors.predictor import Predictor
 from allennlp.models.archival import load_archive
+from allennlp.common.util import import_submodules
 from typing import List, Dict
 import numpy as np
 
@@ -71,6 +73,8 @@ if __name__ == '__main__':
     parser.add_argument('--out', type=str, help='output file, where extractions should be written.', required=True)
     parser.add_argument('--cuda_device', type=int, default=0, help='id of GPU to use (if any)')
     args = parser.parse_args()
+
+    import_submodules('multitask')
 
     arc = load_archive(args.model, cuda_device=args.cuda_device)
     predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')

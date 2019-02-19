@@ -74,11 +74,10 @@ class SrlReaderMultiTask(DatasetReader):
                     tags, tasks = [], []
                     for tt in tts:
                         tt = tt.split('#')
-                        if len(tt) != 1:
+                        if len(tt) != 2:
                             raise ValueError('tag is not valid multi-task format')
                         tags.append(tt[0])
-                        #tasks.append(tt[1])
-                        tasks.append('gt')
+                        tasks.append(tt[1])
                     verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
                     yield self.text_to_instance(tokens, verb_indicator, tasks[0], tags)
 
@@ -98,7 +97,7 @@ class SrlReaderMultiTask(DatasetReader):
     def text_to_instance(self,  # type: ignore
                          tokens: List[Token],
                          verb_label: List[int],
-                         task: str,
+                         task: str = 'gt', # "gt" is the default task (ground truth)
                          tags: List[str] = None) -> Instance:
         """
         We take `pre-tokenized` input here, along with a verb label.  The verb label should be a
@@ -110,7 +109,7 @@ class SrlReaderMultiTask(DatasetReader):
         text_field = TextField(tokens, token_indexers=self._token_indexers)
         fields['tokens'] = text_field
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
-        fields['task'] = LabelField(task, label_namespace='task')
+        fields['task_labels'] = LabelField(task, label_namespace='task_labels')
         if tags:
             fields['tags'] = SequenceLabelField(tags, text_field)
 

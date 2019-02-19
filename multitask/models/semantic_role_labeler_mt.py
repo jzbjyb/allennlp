@@ -62,7 +62,7 @@ class SemanticRoleLabelerMultiTask(Model):
 
         self.text_field_embedder = text_field_embedder
         self.num_classes = self.vocab.get_vocab_size("labels")
-        self.num_tasks = self.vocab.get_vocab_size("task")
+        self.num_tasks = self.vocab.get_vocab_size("task_labels")
         self.register_buffer('_task', torch.arange(self.num_tasks).view([1, -1]))
 
         # For the span based evaluation, we don't want to consider labels
@@ -87,7 +87,7 @@ class SemanticRoleLabelerMultiTask(Model):
     def forward(self,  # type: ignore
                 tokens: Dict[str, torch.LongTensor],
                 verb_indicator: torch.LongTensor,
-                task: torch.LongTensor,
+                task_labels: torch.LongTensor,
                 tags: torch.LongTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
@@ -140,7 +140,7 @@ class SemanticRoleLabelerMultiTask(Model):
         logits = self.tag_projection_layer_mt(encoded_text)
         # get the logits of the corresponding task
         logits = logits.view([batch_size, sequence_length, self.num_tasks, self.num_classes])
-        task_mask = task.view([batch_size, 1]) == self._task
+        task_mask = task_labels.view([batch_size, 1]) == self._task
         logits = torch.masked_select(logits, task_mask.view([batch_size, 1, self.num_tasks, 1])).view(
             [batch_size, sequence_length, self.num_classes])
         # calculate prob
