@@ -6,4 +6,4 @@
 config=$1
 out_dir=$2
 
-allennlp train ${config} --serialization-dir ${out_dir}
+allennlp train ${config} --serialization-dir ${out_dir} --include-package multitask

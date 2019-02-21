@@ -55,6 +55,9 @@ class SemanticRoleLabelerMultiTask(Model):
                  binary_feature_dim: int,
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
+                 task_encoder: Seq2SeqEncoder = None,
+                 encoder_requires_grad: bool = True,
+                 task_encoder_requires_grad: bool = True,
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
                  ignore_span_metric: bool = False) -> None:
@@ -70,6 +73,11 @@ class SemanticRoleLabelerMultiTask(Model):
         self.span_metric = SpanBasedF1Measure(vocab, tag_namespace="labels", ignore_classes=["V"])
 
         self.encoder = encoder
+        self.task_encoder = task_encoder
+        for param in self.encoder.parameters():
+            param.requires_grad = encoder_requires_grad
+        for param in self.task_encoder.parameters():
+            param.requires_grad = task_encoder_requires_grad
         # There are exactly 2 binary features for the verb predicate embedding.
         self.binary_feature_embedding = Embedding(2, binary_feature_dim)
         self.tag_projection_layer_mt = TimeDistributed(
@@ -136,6 +144,8 @@ class SemanticRoleLabelerMultiTask(Model):
         batch_size, sequence_length, _ = embedded_text_with_verb_indicator.size()
 
         encoded_text = self.encoder(embedded_text_with_verb_indicator, mask)
+        if self.task_encoder is not None:
+            encoded_text = self.task_encoder(encoded_text, mask)
 
         logits = self.tag_projection_layer_mt(encoded_text)
         # get the logits of the corresponding task
