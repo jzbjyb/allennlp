@@ -214,7 +214,7 @@ def parse_element(raw_element: str) -> List[Element]:
     elements = [regex.match("^(([a-zA-Z]+)\(([^;]+),List\(([^;]*)\)\))$",
                             elem.lstrip().rstrip())
                 for elem
-                in raw_element.split(';')]
+                in raw_element.split('|;|;|')]
     return [interpret_element(*elem.groups()[1:])
             for elem in elements
             if elem]
@@ -258,6 +258,8 @@ def read(fn: str, task=None) -> List[Extraction]:
                 else:
                     yield prev_sent
                     prev_sent = [cur_ex]
+            else:
+                raise ValueError('parsing error')
     if prev_sent:
         # Yield last element
         yield prev_sent
