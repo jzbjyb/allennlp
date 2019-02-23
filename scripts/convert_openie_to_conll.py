@@ -3,7 +3,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(os.path.join(__file__, os.pardir))))
 
-from typing import List
+from typing import List, Union
 import logging
 from pprint import pprint
 from pprint import pformat
@@ -16,6 +16,7 @@ from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
 from allennlp.data.tokenizers import WordTokenizer
 import argparse
 import spacy
+import numpy as np
 
 class OverlapError(Exception):
     pass
@@ -26,6 +27,16 @@ Extraction = namedtuple("Extraction",  # Open IE extraction
                          "arg1",       # Subject
                          "rel",        # Relation
                          "args2",      # A list of arguments after the predicate
+                         "task",       # for multi task learning
+                         "confidence"] # Confidence in this extraction
+)
+
+MergedExtraction = namedtuple("MergedExtraction",  # Open IE extraction
+                        ["sent",       # Sentence in which this extraction appears
+                         "toks",       # spaCy toks
+                         "arg1",       # Subject (list)
+                         "rel",        # Relation
+                         "args2",      # A list of arguments after the predicate (list of list)
                          "task",       # for multi task learning
                          "confidence"] # Confidence in this extraction
 )
@@ -55,15 +66,18 @@ def main(inp_fn: str,
     else:
         task_li = task.split(':')
     assert len(inp_fn_li) == len(task_li), 'should have the same length'
+    n_sent, n_sam = 0, 0
     with open(out_fn, 'w') as fout:
         for inp_fn, task in zip(inp_fn_li, task_li):
             print('file {} with task {}'.format(inp_fn, task))
             for sent_ls in read(inp_fn, task):
-                fout.write("{}\n\n".format('\n'.join(['\t'.join(map(str,
-                                                                    pad_line_to_ontonotes(line,
-                                                                                          domain)))
-                                                      for line
-                                                      in convert_sent_to_conll(sent_ls)])))
+                ls = ['\t'.join(map(str, pad_line_to_ontonotes(line, domain)))
+                      for line in convert_sent_to_conll(sent_ls, merge=True)]
+                if len(ls) > 0:
+                    n_sent += 1
+                    n_sam += len(ls[0].split('\t')) - 12
+                    fout.write("{}\n\n".format('\n'.join(ls)))
+    print('{} sentences and {} samples'.format(n_sent, n_sam))
 
 def safe_zip(*args):
     """
@@ -90,7 +104,7 @@ def element_from_span(span: List[int],
                     span[-1].idx + len(span[-1])],
                    ' '.join(map(str, span)))
 
-def split_predicate(ex: Extraction) -> Extraction:
+def split_predicate(ex: Union[Extraction, MergedExtraction]) -> Union[Extraction, MergedExtraction]:
     """
     Ensure single word predicate
     by adding "before-predicate" and "after-predicate"
@@ -120,9 +134,12 @@ def split_predicate(ex: Extraction) -> Extraction:
     if after_verb:
         rel_parts.append(element_from_span(after_verb, "AV"))
 
-    return Extraction(ex.sent, ex.toks, ex.arg1, rel_parts, ex.args2, ex.task, ex.confidence)
+    if type(ex) is Extraction:
+        return Extraction(ex.sent, ex.toks, ex.arg1, rel_parts, ex.args2, ex.task, ex.confidence)
+    elif type(ex) is MergedExtraction:
+        return MergedExtraction(ex.sent, ex.toks, ex.arg1, rel_parts, ex.args2, ex.task, ex.confidence)
 
-def extraction_to_conll(ex: Extraction) -> List[str]:
+def extraction_to_conll(ex: Union[Extraction, MergedExtraction]) -> List[str]:
     """
     Return a conll representation of a given input Extraction.
     """
@@ -131,11 +148,15 @@ def extraction_to_conll(ex: Extraction) -> List[str]:
     ret = ['*'] * len(toks)
     ret_touched = [False] * len(toks)
     args = [ex.arg1] + ex.args2
-    rels_and_args = [("ARG{}".format(arg_ind), arg)
-                     for arg_ind, arg in enumerate(args)] + \
-                         [(rel_part.elem_type, rel_part)
-                          for rel_part
-                          in ex.rel]
+    rels_and_args = [(rel_part.elem_type, rel_part) for rel_part in ex.rel]
+    if type(ex) is Extraction:
+        rels_and_args += [("ARG{}".format(arg_ind), arg)
+                          for arg_ind, arg in enumerate(args)]
+    elif type(ex) is MergedExtraction:
+        rels_and_args += [("ARG{}".format(arg_ind), arg)
+                          for arg_ind, argu in enumerate(args) for arg in argu]
+    else:
+        raise ValueError
 
     for rel, arg in rels_and_args:
         # Add brackets
@@ -143,17 +164,17 @@ def extraction_to_conll(ex: Extraction) -> List[str]:
                                            ex.sent)
         cur_end_ind = char_to_word_index(arg.span[1],
                                          ex.sent)
-        if ret_touched[cur_start_ind] or ret_touched[cur_end_ind]:
-            # no overlap allowed
-            raise OverlapError
+        for ci in range(cur_start_ind, cur_end_ind + 1):
+            if ret_touched[ci]:
+                # no overlap allowed
+                raise OverlapError
         if ex.task is None:
             ret[cur_start_ind] = "({}{}".format(rel, ret[cur_start_ind])
-            ret_touched[cur_start_ind] = True
         else:
             ret[cur_start_ind] = "({}#{}{}".format(rel, ex.task, ret[cur_start_ind])
-            ret_touched[cur_start_ind] = True
         ret[cur_end_ind] += ')'
-        ret_touched[cur_end_ind] = True
+        for ci in range(cur_start_ind, cur_end_ind + 1):
+            ret_touched[ci] = True
     return ret
 
 def interpret_span(text_spans: str) -> List[int]:
@@ -211,7 +232,7 @@ def parse_element(raw_element: str) -> List[Element]:
     """
     Parse a raw element into text and indices (integers).
     """
-    elements = [regex.match("^(([a-zA-Z]+)\(([^;]+),List\(([^;]*)\)\))$",
+    elements = [regex.match("^(([a-zA-Z]+)\(([^\t]+),List\(([^\t]*)\)\))$",
                             elem.lstrip().rstrip())
                 for elem
                 in raw_element.split('|;|;|')]
@@ -264,7 +285,37 @@ def read(fn: str, task=None) -> List[Extraction]:
         # Yield last element
         yield prev_sent
 
-def convert_sent_to_conll(sent_ls: List[Extraction]):
+def merge_extraction(ext_li: List[Extraction]) -> List[MergedExtraction]:
+    def arg_uniq_add(args, arg):
+        for a in args:
+            if a.span == arg.span:
+                return
+        args.append(arg)
+    ext_d = {}
+    # group extractions with the same predicate
+    for ext in ext_li:
+        sp = ext.rel.span
+        if type(sp) is list:
+            sp = tuple(sp)
+        if len(sp) != 2:
+            raise ValueError('span format error')
+        if sp not in ext_d:
+            ext_d[sp] = []
+        ext_d[sp].append(ext)
+    mext_li = []
+    for sp, exts in ext_d.items():
+        arg1 = []
+        args2 = [[] for i in range(np.max([len(ext.args2) for ext in exts]))]
+        for ext in exts:
+            arg_uniq_add(arg1, ext.arg1)
+            for i in range(len(ext.args2)):
+                arg_uniq_add(args2[i], ext.args2[i])
+        mext = MergedExtraction(exts[0].sent, exts[0].toks, arg1, exts[0].rel,
+                                args2, exts[0].task, exts[0].confidence)
+        mext_li.append(mext)
+    return mext_li
+
+def convert_sent_to_conll(sent_ls: List[Extraction], merge=False):
     """
     Given a list of extractions for a single sentence -
     convert it to conll representation.
@@ -272,15 +323,17 @@ def convert_sent_to_conll(sent_ls: List[Extraction]):
     # Sanity check - make sure all extractions are on the same sentence
     assert(len(set([ex.sent for ex in sent_ls])) == 1)
     toks = sent_ls[0].sent.split(' ')
-
-    try:
-        return safe_zip(*[range(len(toks)),
-                          toks] + \
-                        [extraction_to_conll(ex)
-                         for ex in sent_ls])
-    except OverlapError:
-        return []
-
+    if merge:
+        # merge extractions with the same predicate
+        sent_ls = merge_extraction(sent_ls)
+    fields = [range(len(toks)), toks]
+    for ex in sent_ls:
+        try:
+            fields.append(extraction_to_conll(ex))
+        except OverlapError:
+            # skip problematic extractions
+            continue
+    return safe_zip(*fields)
 
 def pad_line_to_ontonotes(line, domain) -> List[str]:
     """

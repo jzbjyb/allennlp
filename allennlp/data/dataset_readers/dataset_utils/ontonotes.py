@@ -335,6 +335,8 @@ class Ontonotes:
             speakers.append(speaker if speaker != "-" else None)
 
         named_entities = span_labels[0]
+        if len(verbal_predicates) != len(span_labels) - 1:
+            raise ValueError('duplicate verbal predicates')
         srl_frames = [(predicate, labels) for predicate, labels
                       in zip(verbal_predicates, span_labels[1:])]
 
