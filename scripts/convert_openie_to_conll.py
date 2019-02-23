@@ -52,7 +52,8 @@ def main(inp_fn: str,
          domain: str,
          out_fn: str,
          task: str,
-         split: bool = False) -> None:
+         split: bool = False,
+         dedup: bool = False) -> None:
     """
     inp_fn: str, required.
        Path to file from which to read Open IE extractions in Open IE4's format.
@@ -65,7 +66,10 @@ def main(inp_fn: str,
     split: bool.
         When equals to True, each extraction for the same sentences
         will be separated into different data fragments.
+    dedup: bool.
+        When dedup equals to True, only keep one extraction per predicate.
     """
+    print('dedup: {}, split: {}'.format(dedup, split))
     inp_fn_li = inp_fn.split(':')
     if task is None:
         task_li = [None] * len(inp_fn_li)
@@ -78,6 +82,15 @@ def main(inp_fn: str,
             print('file {} with task {}'.format(inp_fn, task))
             for exts_per_sen in read(inp_fn, task):
                 n_sent += 1
+                if dedup:
+                    pred_set = set()
+                    filter_exts = []
+                    for ext in exts_per_sen:
+                        sp = tuple(ext.rel.span)
+                        if sp not in pred_set:
+                            pred_set.add(sp)
+                            filter_exts.append(ext)
+                    exts_per_sen = filter_exts
                 if split:
                     exts_per_sen = [[ext] for ext in exts_per_sen]
                 else:
@@ -378,6 +391,7 @@ if __name__ == "__main__":
     parser.add_argument("--out", type=str, help="path to the output file, where CoNLL format should be written.", required = True)
     parser.add_argument("--task", type=str, help="task of each input file (separated by :).", default=None)
     parser.add_argument('--split', help='whether to separate extractions for the same sentence', action='store_true')
+    parser.add_argument('--dedup', help='whether to keep only one extraction per predicate', action='store_true')
     args = parser.parse_args()
-    main(args.inp, args.domain, args.out, args.task, split=args.split)
+    main(args.inp, args.domain, args.out, args.task, split=args.split, dedup=args.dedup)
 
