@@ -51,7 +51,8 @@ nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
 def main(inp_fn: str,
          domain: str,
          out_fn: str,
-         task: str) -> None:
+         task: str,
+         split: bool = False) -> None:
     """
     inp_fn: str, required.
        Path to file from which to read Open IE extractions in Open IE4's format.
@@ -59,6 +60,11 @@ def main(inp_fn: str,
        Domain to be used when writing CoNLL format.
     out_fn: str, required.
        Path to file to which to write the CoNLL format Open IE extractions.
+    task: str, required.
+        Used for multi-task learning
+    split: bool.
+        When equals to True, each extraction for the same sentences
+        will be separated into different data fragments.
     """
     inp_fn_li = inp_fn.split(':')
     if task is None:
@@ -70,13 +76,18 @@ def main(inp_fn: str,
     with open(out_fn, 'w') as fout:
         for inp_fn, task in zip(inp_fn_li, task_li):
             print('file {} with task {}'.format(inp_fn, task))
-            for sent_ls in read(inp_fn, task):
-                ls = ['\t'.join(map(str, pad_line_to_ontonotes(line, domain)))
-                      for line in convert_sent_to_conll(sent_ls, merge=True)]
-                if len(ls) > 0:
-                    n_sent += 1
-                    n_sam += len(ls[0].split('\t')) - 12
-                    fout.write("{}\n\n".format('\n'.join(ls)))
+            for exts_per_sen in read(inp_fn, task):
+                n_sent += 1
+                if split:
+                    exts_per_sen = [[ext] for ext in exts_per_sen]
+                else:
+                    exts_per_sen = [exts_per_sen]
+                for exts in exts_per_sen:
+                    ls = ['\t'.join(map(str, pad_line_to_ontonotes(line, domain)))
+                          for line in convert_sent_to_conll(exts, merge=True)]
+                    if len(ls) > 0:
+                        n_sam += len(ls[0].split('\t')) - 12
+                        fout.write("{}\n\n".format('\n'.join(ls)))
     print('{} sentences and {} samples'.format(n_sent, n_sam))
 
 def safe_zip(*args):
@@ -319,6 +330,8 @@ def convert_sent_to_conll(sent_ls: List[Extraction], merge=False):
     """
     Given a list of extractions for a single sentence -
     convert it to conll representation.
+    When merge=True, multiple extractions with the same predicate will be merged
+    and invalid extractions will be skipped.
     """
     # Sanity check - make sure all extractions are on the same sentence
     assert(len(set([ex.sent for ex in sent_ls])) == 1)
@@ -364,6 +377,7 @@ if __name__ == "__main__":
     parser.add_argument("--domain", type=str, help="domain to use when writing the ontonotes file.", required = True)
     parser.add_argument("--out", type=str, help="path to the output file, where CoNLL format should be written.", required = True)
     parser.add_argument("--task", type=str, help="task of each input file (separated by :).", default=None)
+    parser.add_argument('--split', help='whether to separate extractions for the same sentence', action='store_true')
     args = parser.parse_args()
-    main(args.inp, args.domain, args.out, args.task)
+    main(args.inp, args.domain, args.out, args.task, split=args.split)
 
