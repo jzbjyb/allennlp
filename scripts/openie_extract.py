@@ -5,13 +5,13 @@ import argparse
 from functools import reduce
 from allennlp.predictors.predictor import Predictor
 from allennlp.models.archival import load_archive
-from allennlp.common.util import import_submodules
-from typing import List, Dict
+from allennlp.common.util import import_submodules, JsonDict
+from typing import List, Dict, Union
 import numpy as np
 import itertools
 
 
-def read_raw_sents(filepath: str) -> List[List[str]]:
+def read_raw_sents(filepath: str, format='raw') -> List[Union[List[str], JsonDict]]:
     sents_token = []
     with open(filepath, 'r') as fin:
         for l in fin:
@@ -19,7 +19,10 @@ def read_raw_sents(filepath: str) -> List[List[str]]:
             if l == '':
                 continue
             sents_token.append(l.split(' '))
-    return sents_token
+    if format == 'raw':
+        return sents_token
+    if format == 'json':
+        return [{'sentence': sent} for sent in sents_token]
 
 
 class Extraction:
@@ -92,14 +95,41 @@ if __name__ == '__main__':
     parser.add_argument('--cuda_device', type=int, default=0, help='id of GPU to use (if any)')
     parser.add_argument('--unmerge', help='whether to generate multiple extraction for one predicate',
                         action='store_true')
+    parser.add_argument('--method', type=str, default='model', choices=['openie', 'srl'])
     args = parser.parse_args()
 
     import_submodules('multitask')
 
-    arc = load_archive(args.model, cuda_device=args.cuda_device)
-    predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
-    sents_tokens = read_raw_sents(args.inp)
-    preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
+    if args.method == 'model':
+        # directly use openie model
+        arc = load_archive(args.model, cuda_device=args.cuda_device)
+        predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
+        sents_tokens = read_raw_sents(args.inp, format='raw')
+        preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
+    elif args.method == 'srl':
+        # first do srl then retag
+        # two models are required in this case: srl model and retagging model
+        srl_model, retag_model = args.model.split(':')
+        # srl prediction
+        srl_arc = load_archive(srl_model, cuda_device=args.cuda_device)
+        srl_predictor = Predictor.from_archive(srl_arc, predictor_name='semantic-role-labeling')
+        sents_json = read_raw_sents(args.inp, format='json')
+        srl_pred = srl_predictor.predict_batch_json(sents_json, batch_size=256, tokenized=True)
+        # openie prediction
+        retag_arc = load_archive(retag_model, cuda_device=args.cuda_device)
+        retag_predictor = Predictor.from_archive(retag_arc, predictor_name='sentence-tagger')
+        retag_input: List[List[str]] = [verb['tags'] for sent in srl_pred for verb in sent['verbs']]
+        retag_pred = retag_predictor.predict_batch_tokenized(retag_input, batch_size=256)
+        ind = 0
+        for sent in srl_pred:
+            for verb in sent['verbs']:
+                verb['tags'] = retag_pred[ind]['tags']
+                verb['probs'] = retag_pred[ind]['probs']
+                ind += 1
+        assert ind == len(retag_pred), 'retag results in a different number of output'
+        preds = srl_pred
+    else:
+        raise ValueError
     exts = allennlp_prediction_to_extraction(preds, max_n_arg=10, merge=not args.unmerge)
     with open(args.out, 'w') as fout:
         for ext in exts:

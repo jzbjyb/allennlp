@@ -130,13 +130,16 @@ class SimpleTagger(Model):
             predictions_list = [all_predictions[i] for i in range(all_predictions.shape[0])]
         else:
             predictions_list = [all_predictions]
-        all_tags = []
+        all_tags, all_probs = [], []
         for predictions in predictions_list:
             argmax_indices = numpy.argmax(predictions, axis=-1)
             tags = [self.vocab.get_token_from_index(x, namespace="labels")
                     for x in argmax_indices]
+            probs = [predictions[i, x] for i, x in enumerate(argmax_indices)]
             all_tags.append(tags)
+            all_probs.append(probs)
         output_dict['tags'] = all_tags
+        output_dict['probs'] = all_probs
         return output_dict
 
     @overrides
