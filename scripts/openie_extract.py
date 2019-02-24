@@ -10,6 +10,23 @@ from typing import List, Dict, Union
 import numpy as np
 import itertools
 
+def contiguous_check(filepath: str):
+    ''' Check whether all the pred, args in an extraction are contigous span. '''
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            l = l.strip()
+            if l == '':
+                continue
+            l = l.split('\t')
+            sent = l[0].split(' ')
+            comps = l[2:]
+            for comp in comps:
+                tokens, st = comp.rsplit('##')
+                st = int(st)
+                ln = len(tokens.split(' '))
+                if tokens != ' '.join(sent[st:st + ln]):
+                    print(l)
+                    input()
 
 def read_raw_sents(filepath: str, format='raw') -> List[Union[List[str], JsonDict]]:
     sents_token = []
@@ -46,12 +63,16 @@ class Extraction:
 
 
 def allennlp_prediction_to_extraction(preds: List[Dict],
-                                      max_n_arg: int = 10, merge=True) -> List[Extraction]:
+                                      max_n_arg: int = 10, keep_one: bool = False,
+                                      merge: bool = True) -> List[Extraction]:
     '''
     Assume the tag sequence is reasonable (no validation check)
     When merge=False, spans with the same argument index will be separated into different extractions.
+    When keep_one=True, only keep the first argument for each position.
     '''
+    print('keep_one: {}, merge: {}'.format(keep_one, merge))
     exts = []
+    n_trunc_ext = 0
     for pred in preds:
         tokens = pred['words']
         for ext in pred['verbs']:
@@ -78,12 +99,17 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
             args = [arg for arg in args if len(arg) > 0]
             if len(pred) <= 0 or len(args) <= 0:
                 continue
+            # only keep the first argument of each position (should be done before merge)
+            if keep_one:
+                n_trunc_ext += any([len(arg) > 1 for arg in args])
+                args = [arg[:1] for arg in args]
             # merge all the arguments at the same position
             if merge:
                 args = [[[w for a in arg for w in a]] for arg in args]
             # iterate through all the combinations
             for arg in itertools.product(*args):
                 exts.append(Extraction(sent=tokens, pred=pred, args=arg, probs=probs, calc_prob=np.mean))
+    print('{} extractions are truncated'.format(n_trunc_ext))
     return exts
 
 
@@ -94,6 +120,8 @@ if __name__ == '__main__':
     parser.add_argument('--out', type=str, help='output file, where extractions should be written.', required=True)
     parser.add_argument('--cuda_device', type=int, default=0, help='id of GPU to use (if any)')
     parser.add_argument('--unmerge', help='whether to generate multiple extraction for one predicate',
+                        action='store_true')
+    parser.add_argument('--keep_one', help='whether to keep only the first argument for each position',
                         action='store_true')
     parser.add_argument('--method', type=str, default='model', choices=['openie', 'srl'])
     args = parser.parse_args()
@@ -130,7 +158,8 @@ if __name__ == '__main__':
         preds = srl_pred
     else:
         raise ValueError
-    exts = allennlp_prediction_to_extraction(preds, max_n_arg=10, merge=not args.unmerge)
+    exts = allennlp_prediction_to_extraction(preds, max_n_arg=10, merge=not args.unmerge,
+                                             keep_one=args.keep_one)
     with open(args.out, 'w') as fout:
         for ext in exts:
             fout.write('{}\n'.format(ext))
