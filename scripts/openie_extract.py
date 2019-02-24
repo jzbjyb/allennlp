@@ -46,7 +46,7 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
                                       max_n_arg: int = 10, merge=True) -> List[Extraction]:
     '''
     Assume the tag sequence is reasonable (no validation check)
-    When unmerge=True, spans with the same argument index will be separated into different extractions.
+    When merge=False, spans with the same argument index will be separated into different extractions.
     '''
     exts = []
     for pred in preds:
