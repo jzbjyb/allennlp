@@ -53,7 +53,8 @@ def main(inp_fn: str,
          out_fn: str,
          task: str,
          split: bool = False,
-         dedup: bool = False) -> None:
+         dedup: bool = False,
+         rm_coor: bool = False) -> None:
     """
     inp_fn: str, required.
        Path to file from which to read Open IE extractions in Open IE4's format.
@@ -68,8 +69,10 @@ def main(inp_fn: str,
         will be separated into different data fragments.
     dedup: bool.
         When dedup equals to True, only keep one extraction per predicate.
+    rm_coor: bool.
+        When rm_coor equals to True, predicate with multiple extractions will be removed.
     """
-    print('dedup: {}, split: {}'.format(dedup, split))
+    print('rm_coor: {}, dedup: {}, split: {}'.format(rm_coor, dedup, split))
     inp_fn_li = inp_fn.split(':')
     if task is None:
         task_li = [None] * len(inp_fn_li)
@@ -82,6 +85,19 @@ def main(inp_fn: str,
             print('file {} with task {}'.format(inp_fn, task))
             for exts_per_sen in read(inp_fn, task):
                 n_sent += 1
+                if rm_coor:
+                    pred_set = {}
+                    filter_exts = []
+                    for ext in exts_per_sen:
+                        sp = tuple(ext.rel.span)
+                        if sp not in pred_set:
+                            pred_set[sp] = 0
+                        pred_set[sp] += 1
+                    for ext in exts_per_sen:
+                        sp = tuple(ext.rel.span)
+                        if pred_set[sp] == 1:
+                            filter_exts.append(ext)
+                    exts_per_sen = filter_exts
                 if dedup:
                     pred_set = set()
                     filter_exts = []
@@ -94,7 +110,7 @@ def main(inp_fn: str,
                 if split:
                     exts_per_sen = [[ext] for ext in exts_per_sen]
                 else:
-                    exts_per_sen = [exts_per_sen]
+                    exts_per_sen = [exts_per_sen] if len(exts_per_sen) > 0 else []
                 for exts in exts_per_sen:
                     ls = ['\t'.join(map(str, pad_line_to_ontonotes(line, domain)))
                           for line in convert_sent_to_conll(exts, merge=True)]
@@ -392,6 +408,7 @@ if __name__ == "__main__":
     parser.add_argument("--task", type=str, help="task of each input file (separated by :).", default=None)
     parser.add_argument('--split', help='whether to separate extractions for the same sentence', action='store_true')
     parser.add_argument('--dedup', help='whether to keep only one extraction per predicate', action='store_true')
+    parser.add_argument('--rm_coor', help='whether to remove predicates with multiple extractions', action='store_true')
     args = parser.parse_args()
-    main(args.inp, args.domain, args.out, args.task, split=args.split, dedup=args.dedup)
+    main(args.inp, args.domain, args.out, args.task, split=args.split, dedup=args.dedup, rm_coor=args.rm_coor)
 
