@@ -72,33 +72,41 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
     '''
     print('keep_one: {}, merge: {}'.format(keep_one, merge))
     exts = []
-    n_trunc_ext = 0
+    n_trunc_ext, n_more_pred = 0, 0
     for pred in preds:
         tokens = pred['words']
         for ext in pred['verbs']:
             probs = []
             pred = []
             args = [[] for _ in range(max_n_arg)]
-            last_ai = -1
+            last_ai = -1 # -1 for start and O, -2 for V, others for arg
             for i, w, t, p in zip(range(len(tokens)), tokens, ext['tags'], ext['probs']):
                 probs.append(p)
                 if t.find('V') >= 0:
-                    pred.append((w, i))
-                    last_ai = -1
+                    if last_ai != -2:
+                        pred.append([])
+                    pred[-1].append((w, i))
+                    last_ai = -2
                 elif t.find('ARG') >= 0:
                     ai = int(t[t.find('ARG')+3:])
                     if ai >= len(args):
                         raise ValueError('too many args')
+                    if ai < 0:
+                        raise ValueError('negative arg position')
                     if last_ai != ai:
                         args[ai].append([]) # create new coordination argument placeholder
                     args[ai][-1].append((w, i))
                     last_ai = ai
                 else:
                     last_ai = -1
-            # Remove empty argument position (for example, arg2 exists without arg1).
+            # remove empty argument position (for example, arg2 exists without arg1).
             args = [arg for arg in args if len(arg) > 0]
             if len(pred) <= 0 or len(args) <= 0:
                 continue
+            # only keep the first predicate
+            if len(pred) > 1:
+                n_more_pred += 1
+            pred = pred[0]
             # only keep the first argument of each position (should be done before merge)
             if keep_one:
                 n_trunc_ext += any([len(arg) > 1 for arg in args])
@@ -109,7 +117,8 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
             # iterate through all the combinations
             for arg in itertools.product(*args):
                 exts.append(Extraction(sent=tokens, pred=pred, args=arg, probs=probs, calc_prob=np.mean))
-    print('{} extractions are truncated'.format(n_trunc_ext))
+    print('{} extractions are truncated, {} extractions have more than one predicates'.format(
+        n_trunc_ext, n_more_pred))
     return exts
 
 
@@ -133,7 +142,7 @@ if __name__ == '__main__':
         arc = load_archive(args.model, cuda_device=args.cuda_device)
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
         sents_tokens = read_raw_sents(args.inp, format='raw')
-        preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
+        preds = predictor.o(sents_tokens, batch_size=256, warm_up=3)
     elif args.method == 'srl':
         # first do srl then retag
         # two models are required in this case: srl model and retagging model
