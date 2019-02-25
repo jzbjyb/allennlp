@@ -76,8 +76,9 @@ class SemanticRoleLabelerMultiTask(Model):
         self.task_encoder = task_encoder
         for param in self.encoder.parameters():
             param.requires_grad = encoder_requires_grad
-        for param in self.task_encoder.parameters():
-            param.requires_grad = task_encoder_requires_grad
+        if self.task_encoder is not None:
+            for param in self.task_encoder.parameters():
+                param.requires_grad = task_encoder_requires_grad
         # There are exactly 2 binary features for the verb predicate embedding.
         self.binary_feature_embedding = Embedding(2, binary_feature_dim)
         self.tag_projection_layer_mt = TimeDistributed(
@@ -172,8 +173,8 @@ class SemanticRoleLabelerMultiTask(Model):
         # when we do viterbi inference in self.decode.
         output_dict["mask"] = mask
 
-        words, verbs = zip(*[(x["words"], x["verb"]) for x in metadata])
         if metadata is not None:
+            words, verbs = zip(*[(x["words"], x["verb"]) for x in metadata])
             output_dict["words"] = list(words)
             output_dict["verb"] = list(verbs)
         return output_dict
@@ -244,90 +245,3 @@ class SemanticRoleLabelerMultiTask(Model):
                 if i != j and label[0] == 'I' and not previous_label == 'B' + label[1:]:
                     transition_matrix[i, j] = float("-inf")
         return transition_matrix
-
-
-def write_to_conll_eval_file(prediction_file: TextIO,
-                             gold_file: TextIO,
-                             verb_index: Optional[int],
-                             sentence: List[str],
-                             prediction: List[str],
-                             gold_labels: List[str]):
-    """
-    Prints predicate argument predictions and gold labels for a single verbal
-    predicate in a sentence to two provided file references.
-
-    Parameters
-    ----------
-    prediction_file : TextIO, required.
-        A file reference to print predictions to.
-    gold_file : TextIO, required.
-        A file reference to print gold labels to.
-    verb_index : Optional[int], required.
-        The index of the verbal predicate in the sentence which
-        the gold labels are the arguments for, or None if the sentence
-        contains no verbal predicate.
-    sentence : List[str], required.
-        The word tokens.
-    prediction : List[str], required.
-        The predicted BIO labels.
-    gold_labels : List[str], required.
-        The gold BIO labels.
-    """
-    verb_only_sentence = ["-"] * len(sentence)
-    if verb_index:
-        verb_only_sentence[verb_index] = sentence[verb_index]
-
-    conll_format_predictions = convert_bio_tags_to_conll_format(prediction)
-    conll_format_gold_labels = convert_bio_tags_to_conll_format(gold_labels)
-
-    for word, predicted, gold in zip(verb_only_sentence,
-                                     conll_format_predictions,
-                                     conll_format_gold_labels):
-        prediction_file.write(word.ljust(15))
-        prediction_file.write(predicted.rjust(15) + "\n")
-        gold_file.write(word.ljust(15))
-        gold_file.write(gold.rjust(15) + "\n")
-    prediction_file.write("\n")
-    gold_file.write("\n")
-
-
-def convert_bio_tags_to_conll_format(labels: List[str]):
-    """
-    Converts BIO formatted SRL tags to the format required for evaluation with the
-    official CONLL 2005 perl script. Spans are represented by bracketed labels,
-    with the labels of words inside spans being the same as those outside spans.
-    Beginning spans always have a opening bracket and a closing asterisk (e.g. "(ARG-1*" )
-    and closing spans always have a closing bracket (e.g. "*)" ). This applies even for
-    length 1 spans, (e.g "(ARG-0*)").
-
-    A full example of the conversion performed:
-
-    [B-ARG-1, I-ARG-1, I-ARG-1, I-ARG-1, I-ARG-1, O]
-    [ "(ARG-1*", "*", "*", "*", "*)", "*"]
-
-    Parameters
-    ----------
-    labels : List[str], required.
-        A list of BIO tags to convert to the CONLL span based format.
-
-    Returns
-    -------
-    A list of labels in the CONLL span based format.
-    """
-    sentence_length = len(labels)
-    conll_labels = []
-    for i, label in enumerate(labels):
-        if label == "O":
-            conll_labels.append("*")
-            continue
-        new_label = "*"
-        # Are we at the beginning of a new span, at the first word in the sentence,
-        # or is the label different from the previous one? If so, we are seeing a new label.
-        if label[0] == "B" or i == 0 or label[1:] != labels[i - 1][1:]:
-            new_label = "(" + label[2:] + new_label
-        # Are we at the end of the sentence, is the next word a new span, or is the next
-        # word not in a span? If so, we need to close the label span.
-        if i == sentence_length - 1 or labels[i + 1][0] == "B" or label[1:] != labels[i + 1][1:]:
-            new_label = new_label + ")"
-        conll_labels.append(new_label)
-    return conll_labels

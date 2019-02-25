@@ -6,6 +6,7 @@
 config=$1
 out_dir=$2
 eval_dir=$3
+eval_args="${@:4}"
 
-allennlp train ${config} --serialization-dir ${out_dir} --include-package multitask &&
-./scripts/openie_extract.sh ${out_dir}/model.tar.gz ${eval_dir}
+./run.sh ${config} ${out_dir}
+./scripts/openie_extract.sh ${out_dir} ${eval_dir} ${eval_args}
