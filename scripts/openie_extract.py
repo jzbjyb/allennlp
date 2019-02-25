@@ -142,7 +142,7 @@ if __name__ == '__main__':
         arc = load_archive(args.model, cuda_device=args.cuda_device)
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
         sents_tokens = read_raw_sents(args.inp, format='raw')
-        preds = predictor.o(sents_tokens, batch_size=256, warm_up=3)
+        preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
     elif args.method == 'srl':
         # first do srl then retag
         # two models are required in this case: srl model and retagging model
