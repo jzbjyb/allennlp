@@ -9,6 +9,7 @@ rerank_config=$3
 rerank_model_dir=$4
 eval_from=$5
 eval_to=$6
+beam=$7
 
 cur_dir=$(pwd)
 
@@ -26,10 +27,9 @@ conda_dea=/home/zhengbaj/anaconda3/bin/deactivate
 mkdir -p ${rerank_data_dir}
 for split in train dev
 do
-    # TODO: add beam search
     python scripts/openie_extract.py --model ${openie_model_dir}/model.tar.gz \
         --inp data/openie/raw_sent/oie2016_${split}.txt \
-        --out ${rerank_data_dir}/oie2016.${split}.beam --keep_one
+        --out ${rerank_data_dir}/oie2016.${split}.beam --keep_one --beam_search ${beam}
 done &&
 
 # converting extraction files to pseudo conll files

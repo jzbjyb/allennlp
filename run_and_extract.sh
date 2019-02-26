@@ -9,4 +9,4 @@ eval_dir=$3
 eval_args="${@:4}"
 
 ./run.sh ${config} ${out_dir}
-./scripts/openie_extract.sh ${out_dir} ${eval_dir} ${eval_args}
+./scripts/openie_extract.sh ${out_dir}/model.tar.gz ${eval_dir} ${eval_args}
