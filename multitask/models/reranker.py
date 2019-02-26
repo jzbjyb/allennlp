@@ -55,7 +55,7 @@ class Reranker(SemanticRoleLabelerMultiTask):
                            dim=1, index=tags.view(-1, 1)).view(*tags.size())
         lpt *= mask.float()
         alpt = lpt.sum(-1) / (mask.sum(-1).float() + 1e-13)
-        scores = self.score_layer(alpt.unsqueeze(-1)).squeeze()
+        scores = self.score_layer(alpt.unsqueeze(-1)).squeeze(-1)
         output_dict['scores'] = scores
         if labels is not None:
             labels = labels.float()
