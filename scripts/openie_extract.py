@@ -128,6 +128,7 @@ if __name__ == '__main__':
     parser.add_argument('--inp', type=str, help='input file of raw sentences.', required=True)
     parser.add_argument('--out', type=str, help='output file, where extractions should be written.', required=True)
     parser.add_argument('--cuda_device', type=int, default=0, help='id of GPU to use (if any)')
+    parser.add_argument('--beam_search', type=int, default=1, help='beam size')
     parser.add_argument('--unmerge', help='whether to generate multiple extraction for one predicate',
                         action='store_true')
     parser.add_argument('--keep_one', help='whether to keep only the first argument for each position',
@@ -142,7 +143,8 @@ if __name__ == '__main__':
         arc = load_archive(args.model, cuda_device=args.cuda_device)
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
         sents_tokens = read_raw_sents(args.inp, format='raw')
-        preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3)
+        preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3,
+                                        beam_search=args.beam_search)
     elif args.method == 'srl':
         # first do srl then retag
         # two models are required in this case: srl model and retagging model

@@ -478,6 +478,102 @@ def viterbi_decode(tag_sequence: torch.Tensor,
     return viterbi_path, viterbi_score
 
 
+def n_best_viterbi_decode(tag_sequence: torch.Tensor,
+                          transition_matrix: torch.Tensor,
+                          tag_observations: Optional[List[int]] = None,
+                          n_best: int = 1):
+    """
+    Perform Viterbi decoding in log space over a sequence given a transition matrix
+    specifying pairwise (transition) potentials between tags and a matrix of shape
+    (sequence_length, num_tags) specifying unary potentials for possible tags per
+    timestep.
+
+    Parameters
+    ----------
+    tag_sequence : torch.Tensor, required.
+        A tensor of shape (sequence_length, num_tags) representing scores for
+        a set of tags over a given sequence.
+    transition_matrix : torch.Tensor, required.
+        A tensor of shape (num_tags, num_tags) representing the binary potentials
+        for transitioning between a given pair of tags.
+    tag_observations : Optional[List[int]], optional, (default = None)
+        A list of length ``sequence_length`` containing the class ids of observed
+        elements in the sequence, with unobserved elements being set to -1. Note that
+        it is possible to provide evidence which results in degenerate labelings if
+        the sequences of tags you provide as evidence cannot transition between each
+        other, or those transitions are extremely unlikely. In this situation we log a
+        warning, but the responsibility for providing self-consistent evidence ultimately
+        lies with the user.
+    n_best : Optional[int], optional, (defalut = 1)
+        Keep n best alternatives after decoding.
+
+    Returns
+    -------
+    viterbi_path : torch.Tensor of shape (n_best, sequence_length)
+        The tag indices of the top-n likelihood tag sequence.
+    viterbi_score : torch.Tensor of shape (n_best)
+        The score of the viterbi path.
+    """
+    sequence_length, num_tags = list(tag_sequence.size())
+    if tag_observations:
+        if len(tag_observations) != sequence_length:
+            raise ConfigurationError("Observations were provided, but they were not the same length "
+                                     "as the sequence. Found sequence of length: {} and evidence: {}"
+                                     .format(sequence_length, tag_observations))
+    else:
+        tag_observations = [-1 for _ in range(sequence_length)]
+
+    path_scores = [] # SHAPE: (seq_len * <=N * T)
+    path_indices = [] # SHAPE: (seq_len * <=N * T)
+
+    if tag_observations[0] != -1:
+        one_hot = torch.zeros(num_tags)
+        one_hot[tag_observations[0]] = 100000.
+        path_scores.append(one_hot.unsqueeze(0))
+    else:
+        path_scores.append(tag_sequence[:1, :])
+
+    # Evaluate the scores for all possible paths.
+    for timestep in range(1, sequence_length):
+        # Add pairwise potentials to current scores.
+        # SHAPE: (<=N, T, T)
+        summed_potentials = path_scores[timestep - 1].unsqueeze(-1) + transition_matrix.unsqueeze(0)
+        # both SHAPE: (<=N, T)
+        scores, paths = torch.topk(summed_potentials.view(-1, num_tags), n_best, 0)
+
+        # If we have an observation for this timestep, use it
+        # instead of the distribution over tags.
+        observation = tag_observations[timestep]
+        # Warn the user if they have passed
+        # invalid/extremely unlikely evidence.
+        if tag_observations[timestep - 1] != -1:
+            if transition_matrix[tag_observations[timestep - 1], observation] < -10000:
+                logger.warning("The pairwise potential between tags you have passed as "
+                               "observations is extremely unlikely. Double check your evidence "
+                               "or transition potentials!")
+        if observation != -1:
+            one_hot = torch.zeros(num_tags)
+            one_hot[observation] = 100000.
+            path_scores.append(one_hot.unsqueeze(0) + scores)
+        else:
+            path_scores.append(tag_sequence[timestep, :].unsqueeze(0) + scores)
+        path_indices.append(paths)
+
+    # Construct the top n most likely sequence backwards.
+    # both SHAPE: (<=N)
+    viterbi_score, ind = torch.topk(path_scores[-1].flatten(), n_best)
+    ind_path = [ind]
+    viterbi_path = [torch.remainder(ind, num_tags)]
+    for backward_timestep in reversed(path_indices):
+        ind = backward_timestep.flatten()[ind_path[-1]]
+        ind_path.append(ind)
+        viterbi_path.append(torch.remainder(ind, num_tags))
+    # Reverse the backward path.
+    viterbi_path.reverse()
+    viterbi_path = torch.stack(viterbi_path, -1)
+    return viterbi_path, viterbi_score
+
+
 def get_text_field_mask(text_field_tensors: Dict[str, torch.Tensor],
                         num_wrapping_dims: int = 0) -> torch.LongTensor:
     """
