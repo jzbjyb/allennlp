@@ -22,7 +22,7 @@ class RerankPredictor(Predictor):
             if not any(verb_ind):
                 continue  # skip extractions without predicate
             insts.append(self._dataset_reader.text_to_instance(
-                tokens, verb_ind, tags=self._dataset_reader.map_tags(ext.tags)))
+                tokens, verb_ind, tags=soc.map_tags(ext.tags, one_verb=self._dataset_reader._one_verb)))
         # run the model and get the scores
         outputs = []
         for batch in range(0, len(insts), batch_size):

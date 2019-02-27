@@ -10,6 +10,20 @@ from typing import List, Dict, Union
 import numpy as np
 import itertools
 
+def confidence_check(filepath: str):
+    ''' Calcualte the mean confidence value of the extractions '''
+    count, sum_conf = 0, 0
+    with open(filepath, 'r') as fin:
+        for l in fin:
+            l = l.strip()
+            if l == '':
+                continue
+            l = l.split('\t')
+            conf = float(l[1])
+            count += 1
+            sum_conf += conf
+    print(sum_conf / (count + 1e-10))
+
 def contiguous_check(filepath: str):
     ''' Check whether all the pred, args in an extraction are contigous span. '''
     with open(filepath, 'r') as fin:
@@ -44,7 +58,7 @@ def read_raw_sents(filepath: str, format='raw') -> List[Union[List[str], JsonDic
 
 class Extraction:
     def __init__(self, sent, pred, args, probs,
-                 calc_prob=lambda probs: 1.0 / (reduce(lambda x, y: x * y, probs) + 0.001)):
+                 calc_prob=lambda probs: np.mean(np.log(probs))):
         self.sent = sent
         self.calc_prob = calc_prob
         self.probs = probs
@@ -116,7 +130,8 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
                 args = [[[w for a in arg for w in a]] for arg in args]
             # iterate through all the combinations
             for arg in itertools.product(*args):
-                exts.append(Extraction(sent=tokens, pred=pred, args=arg, probs=probs, calc_prob=np.mean))
+                calc_prob = lambda x: np.mean(np.log(np.clip(x, 1e-5, 1 - 1e-5)))
+                exts.append(Extraction(sent=tokens, pred=pred, args=arg, probs=probs, calc_prob=calc_prob))
     print('{} extractions are truncated, {} extractions have more than one predicates'.format(
         n_trunc_ext, n_more_pred))
     return exts

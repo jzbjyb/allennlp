@@ -17,8 +17,12 @@ if __name__ == '__main__':
     }
     rm_key = ['_task', 'score_layer.weight', 'score_layer.bias']
     for ok, nk in map_key.items():
+        if ok not in w:
+            continue
         w[nk] = w[ok]
         del w[ok]
     for ok in rm_key:
+        if ok not in w:
+            continue
         del w[ok]
     torch.save(w, args.out)

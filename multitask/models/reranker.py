@@ -33,7 +33,7 @@ class Reranker(SemanticRoleLabelerMultiTask):
         super().__init__(vocab, text_field_embedder, encoder, binary_feature_dim, embedding_dropout,
                          initializer, task_encoder, encoder_requires_grad, task_encoder_requires_grad,
                          regularizer, label_smoothing, ignore_span_metric)
-        self.score_layer = Linear(1, 1)
+        #self.score_layer = Linear(1, 1)
         self.alpha = 1.0 # weights for cross entropy loss
 
     def forward(self,
@@ -55,7 +55,8 @@ class Reranker(SemanticRoleLabelerMultiTask):
                            dim=1, index=tags.view(-1, 1)).view(*tags.size())
         lpt *= mask.float()
         alpt = lpt.sum(-1) / (mask.sum(-1).float() + 1e-13)
-        scores = self.score_layer(alpt.unsqueeze(-1)).squeeze(-1)
+        #scores = self.score_layer(alpt.unsqueeze(-1)).squeeze(-1)
+        scores = alpt # use avg log prob directly as scores
         output_dict['scores'] = scores
         if labels is not None:
             labels = labels.float()

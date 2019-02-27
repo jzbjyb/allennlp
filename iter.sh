@@ -4,16 +4,19 @@
 #SBATCH --time=0
 set -e
 
-niter=$1
-data_dir=$2 # reranking data root dir. Initial conll file (if have)
+siter=$1
+eiter=$2
+data_dir=$3 # reranking data root dir. Initial conll file (if have)
             # should be ${data_dir}/iter0/oie2016.[train|dev].iter.conll
-model_dir=$3 # reranking model root dir. Initial model should be put in
+model_dir=$4 # reranking model root dir. Initial model should be put in
              # ${model_dir}/iter0/tag_model/model.tar.gz
              # (both compressed and uncompressed)
-eval_dir=$4 # evaluation root dir. Initial extractions should be put in
+eval_dir=$5 # evaluation root dir. Initial extractions should be put in
             # ${eval_dir}/iter0/tag_model
-rerank_conf=$5 # rerank json config file
-beam=$6 # size of beam search
+rerank_conf=$6 # rerank json config file
+beam=$7 # size of beam search
+combine=$8 # when set to true, combine conll files from previous iteration
+gold=$9 # when set to true, use gold conll files
 
 # make path absolute
 pwd_dir=$(pwd)
@@ -25,7 +28,7 @@ eval_dir=${pwd_dir}/${eval_dir}
 conda_act=/home/zhengbaj/anaconda3/bin/activate
 conda_dea=/home/zhengbaj/anaconda3/bin/deactivate
 
-for (( e=1; e<=$niter; e++ ))
+for (( e=siter; e<=$eiter; e++ ))
 do
     echo "=== Iter $e ==="
 
@@ -54,15 +57,27 @@ do
         this_beam=${data_dir}/${next_dir}/oie2016.${split}.beam
         this_beam_conll=${data_dir}/${next_dir}/oie2016.${split}.beam.conll
         this_conll=${data_dir}/${next_dir}/oie2016.${split}.iter.conll
+        gold_conll=${data_dir}/${next_dir}/oie2016.${split}.gold.conll
 
         python benchmark.py --gold=./oie_corpus/${split}.oie.orig.correct.head --out=/dev/null \
             --tabbed=${this_beam} --label=${this_beam_conll} --predArgHeadMatch
 
-        if [ -f "$last_conll" ]
+        if [ -f "$last_conll" ] && [ "$combine" = true ]
         then
             python combine_conll.py -inp=${last_conll}:${this_beam_conll} -out=${this_conll}
         else
-            cp ${this_beam_conll} ${this_conll}
+            # combine with self to avoid dup extractions
+            python combine_conll.py -inp=${this_beam_conll}:${this_beam_conll} -out=${this_conll}
+        fi
+
+        if [ "$gold" = true ]
+        then
+            # TODO: better way to specify the dir
+            gold_data=/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/${split}_split_rm_coor/oie2016.${split}.fake_conll
+            python combine_conll.py -inp=${this_conll}:${this_conll} -gold=${gold_data} \
+                -out=${gold_conll}
+        else
+            cp ${this_conll} ${gold_conll}
         fi
     done
     source $conda_dea
@@ -72,6 +87,7 @@ do
     echo "train reranking model"
 
     # TODO: automatically handle config with external variables?
+    # TODO: modify config json to gold.conll
     conf_data_dir=${data_dir}/${next_dir} # use new data
     cond_model_dir=${model_dir}/${cur_dir}/tag_model # initialize from old tagging model
     conf_conf=${conf_data_dir}/iter_conf.jsonnet # place generated conf in data dir

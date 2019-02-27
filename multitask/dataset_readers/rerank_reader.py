@@ -95,6 +95,48 @@ class SupOieConll:
                 yield self._conll_rows_to_extraction(rows)
 
 
+    def map_tags_reverse(self, tags):
+        ''' Map sup oie tags to conll (used in SRL) tags '''
+        def mapper(tag):
+            if tag == 'O':
+                return tag
+            else:
+                bio, pa = tag.split('-')
+                if bio not in {'B', 'I'}:
+                    raise ValueError('tag error')
+                if pa.startswith('ARG'):
+                    pos = pa[3:]
+                    return 'A{}-{}'.format(int(pos), bio)
+                elif pa =='V':
+                    return 'P-B'
+                else:
+                    return 'O'
+        return [mapper(tag) for tag in tags]
+
+
+    def map_tags(self, tags, one_verb=True):
+        ''' Map sup oie tags to conll (used in SRL) tags '''
+        def mapper(tag):
+            nv = 0
+            if tag == 'O':
+                return tag
+            else:
+                pa, bio = tag.split('-')
+                if bio not in {'B', 'I'}:
+                    raise ValueError('tag error')
+                if pa.startswith('A'):
+                    pos = pa[1:]
+                    return '{}-ARG{}'.format(bio, int(pos))
+                elif pa == 'P':
+                    if one_verb and (bio != 'B' or nv > 0):
+                        return 'O'
+                    nv += 1
+                    return '{}-{}'.format(bio, 'V')
+                else:
+                    raise ValueError('tag error')
+        return [mapper(tag) for tag in tags]
+
+
 @DatasetReader.register('rerank')
 class RerankReader(DatasetReader):
     '''
@@ -119,30 +161,9 @@ class RerankReader(DatasetReader):
             tokens = [Token(t) for t in ext.words]
             if not any(verb_ind):
                 continue # skip extractions without predicate
-            yield self.text_to_instance(tokens, verb_ind, tags=self.map_tags(ext.tags),
+            yield self.text_to_instance(tokens, verb_ind,
+                                        tags=soc.map_tags(ext.tags, one_verb=self._one_verb),
                                         label=ext.label, weight=ext.weight)
-
-    def map_tags(self, tags):
-        ''' Map sup oie tags to conll (used in SRL) tags '''
-        def mapper(tag):
-            nv = 0
-            if tag == 'O':
-                return tag
-            else:
-                pa, bio = tag.split('-')
-                if bio not in {'B', 'I'}:
-                    raise ValueError('tag error')
-                if pa.startswith('A'):
-                    pos = pa[1:]
-                    return '{}-ARG{}'.format(bio, int(pos))
-                elif pa == 'P':
-                    if self._one_verb and (bio != 'B' or nv > 0):
-                        return 'O'
-                    nv += 1
-                    return '{}-{}'.format(bio, 'V')
-                else:
-                    raise ValueError('tag error')
-        return [mapper(tag) for tag in tags]
 
     def text_to_instance(self,  # type: ignore
                          tokens: List[Token],
