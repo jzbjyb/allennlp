@@ -146,11 +146,13 @@ class RerankReader(DatasetReader):
                  default_task = 'gt', # "gt" is the default task (ground truth)
                  one_verb = True, # each instance only have one "V" tag which is "B-V"
                  token_indexers: Dict[str, TokenIndexer] = None,
+                 skip_neg: bool = False, # if True, negative samples are dropped
                  lazy: bool = False) -> None:
         super().__init__(lazy)
         self._default_task = default_task
         self._one_verb = one_verb
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
+        self._skip_neg = skip_neg
 
     @overrides
     def _read(self, filepath: str):
@@ -161,6 +163,8 @@ class RerankReader(DatasetReader):
             tokens = [Token(t) for t in ext.words]
             if not any(verb_ind):
                 continue # skip extractions without predicate
+            if self._skip_neg and ext.label == 0:
+                continue # skip negative examples
             yield self.text_to_instance(tokens, verb_ind,
                                         tags=soc.map_tags(ext.tags, one_verb=self._one_verb),
                                         label=ext.label, weight=ext.weight)
