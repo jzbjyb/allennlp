@@ -15,7 +15,7 @@ if __name__ == '__main__':
         'tag_projection_layer_mt._module.weight': 'tag_projection_layer._module.weight',
         'tag_projection_layer_mt._module.bias': 'tag_projection_layer._module.bias',
     }
-    rm_key = ['_task', 'score_layer.weight', 'score_layer.bias']
+    rm_key = ['_task', 'score_layer.weight', 'score_layer.bias', 'score_bias']
     for ok, nk in map_key.items():
         if ok not in w:
             continue

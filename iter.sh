@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --mem=10000
+#SBATCH --mem=20000
 #SBATCH --gres=gpu:1
 #SBATCH --time=0
 set -e
