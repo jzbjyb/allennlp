@@ -308,7 +308,8 @@ class ConditionalRandomField(torch.nn.Module):
     def forward(self,
                 inputs: torch.Tensor,
                 tags: torch.Tensor,
-                mask: torch.ByteTensor = None) -> torch.Tensor:
+                mask: torch.ByteTensor = None,
+                agg: str = 'sum') -> torch.Tensor:
         """
         Computes the log likelihood.
         """
@@ -319,7 +320,12 @@ class ConditionalRandomField(torch.nn.Module):
         log_denominator = self._input_likelihood(inputs, mask)
         log_numerator = self._joint_likelihood(inputs, tags, mask)
 
-        return torch.sum(log_numerator - log_denominator)
+        if agg == 'sum':
+            return torch.sum(log_numerator - log_denominator)
+        elif agg is None:
+            return log_numerator - log_denominator
+        else:
+            raise ValueError
 
     def viterbi_tags(self,
                      logits: torch.Tensor,

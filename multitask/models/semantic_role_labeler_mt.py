@@ -14,7 +14,7 @@ from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure
-
+from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
 @Model.register("srl_mt")
 class SemanticRoleLabelerMultiTask(Model):
@@ -60,7 +60,8 @@ class SemanticRoleLabelerMultiTask(Model):
                  task_encoder_requires_grad: bool = True,
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
-                 ignore_span_metric: bool = False) -> None:
+                 ignore_span_metric: bool = False,
+                 use_crf: bool = False) -> None:
         super(SemanticRoleLabelerMultiTask, self).__init__(vocab, regularizer)
 
         self.text_field_embedder = text_field_embedder
@@ -86,7 +87,13 @@ class SemanticRoleLabelerMultiTask(Model):
         self.embedding_dropout = Dropout(p=embedding_dropout)
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
-
+        # set up crf
+        self.use_crf = use_crf  # whether to use CRF decoding
+        if self.use_crf:
+            labels = self.vocab.get_index_to_token_vocabulary('labels')
+            constraints = allowed_transitions('BIO', labels)
+            self.crf = ConditionalRandomField(
+                self.num_classes, constraints, include_start_end_transitions=False)
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                encoder.get_input_dim(),
                                "text embedding dim + verb indicator embedding dim",
@@ -154,19 +161,34 @@ class SemanticRoleLabelerMultiTask(Model):
         task_mask = task_labels.view([batch_size, 1]) == self._task
         logits = torch.masked_select(logits, task_mask.view([batch_size, 1, self.num_tasks, 1])).view(
             [batch_size, sequence_length, self.num_classes])
+        output_dict = {'logits': logits}
         # calculate prob
         reshaped_log_probs = logits.view(-1, self.num_classes)
-        class_probabilities = F.softmax(reshaped_log_probs, dim=-1).view(
-            [batch_size, sequence_length, self.num_classes])
-        output_dict = {"logits": logits, "class_probabilities": class_probabilities}
+        if self.use_crf:
+            predicted_tags = [x for x, y in self.crf.viterbi_tags(logits, mask)]
+            output_dict['tags'] = predicted_tags
+            # pseudo class prob
+            class_probabilities = logits * 0.
+            for i, instance_tags in enumerate(predicted_tags):
+                for j, tag_id in enumerate(instance_tags):
+                    class_probabilities[i, j, tag_id] = 1
+            output_dict['class_probabilities'] = class_probabilities
+        else:
+            class_probabilities = F.softmax(reshaped_log_probs, dim=-1).view(
+                [batch_size, sequence_length, self.num_classes])
+            output_dict['class_probabilities'] = class_probabilities
+        # calculate loss
         if tags is not None:
-            loss = sequence_cross_entropy_with_logits(logits,
-                                                      tags,
-                                                      mask,
-                                                      label_smoothing=self._label_smoothing)
-            if not self.ignore_span_metric:
-                self.span_metric(class_probabilities, tags, mask)
+            if self.use_crf:
+                ll = self.crf(logits, tags, mask, agg=None)
+                ll /= mask.sum(1).float() + 1e-13 # average over words in each seq
+                loss = -ll.sum() / ((mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
+            else:
+                loss = sequence_cross_entropy_with_logits(
+                    logits, tags, mask, label_smoothing=self._label_smoothing)
             output_dict["loss"] = loss
+            if not self.ignore_span_metric:
+                self.span_metric(output_dict['class_probabilities'], tags, mask)
 
         # We need to retain the mask in the output dictionary
         # so that we can crop the sequences to remove padding
@@ -186,6 +208,12 @@ class SemanticRoleLabelerMultiTask(Model):
         constraint simply specifies that the output tags must be a valid BIO sequence.  We add a
         ``"tags"`` key to the dictionary with the result.
         """
+        if self.use_crf:
+            # TODO: add prob
+            output_dict['tags'] = [
+                [self.vocab.get_token_from_index(tag, namespace='labels') for tag in instance_tags]
+                for instance_tags in output_dict["tags"]]
+            return output_dict
         all_predictions = output_dict['class_probabilities']
         sequence_lengths = get_lengths_from_binary_sequence_mask(output_dict["mask"]).data.tolist()
 
