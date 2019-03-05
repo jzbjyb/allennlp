@@ -8,9 +8,9 @@
     }
   },
   //"train_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/train/",
-  "train_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/train",
+  "train_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/train_split_rm_coor",
   //"validation_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/development/",
-  "validation_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/dev",
+  "validation_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/dev_split_rm_coor",
   "model": {
     "type": "srl",
     "text_field_embedder": {

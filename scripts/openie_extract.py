@@ -78,13 +78,15 @@ class Extraction:
 
 def allennlp_prediction_to_extraction(preds: List[Dict],
                                       max_n_arg: int = 10, keep_one: bool = False,
-                                      merge: bool = True) -> List[Extraction]:
+                                      merge: bool = True,
+                                      keep_ext_prob: bool = False) -> List[Extraction]:
     '''
     Assume the tag sequence is reasonable (no validation check)
     When merge=False, spans with the same argument index will be separated into different extractions.
     When keep_one=True, only keep the first argument for each position.
+    When arg_prob=True, only keep the probability of tags involved in the extraction.
     '''
-    print('keep_one: {}, merge: {}'.format(keep_one, merge))
+    print('keep_one: {}, merge: {}, keep_ext_prob: {}'.format(keep_one, merge, keep_ext_prob))
     exts = []
     n_trunc_ext, n_more_pred = 0, 0
     for pred in preds:
@@ -113,6 +115,8 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
                     last_ai = ai
                 else:
                     last_ai = -1
+                    if keep_ext_prob:
+                        del probs[-1]
             # remove empty argument position (for example, arg2 exists without arg1).
             args = [arg for arg in args if len(arg) > 0]
             if len(pred) <= 0 or len(args) <= 0:
@@ -130,7 +134,10 @@ def allennlp_prediction_to_extraction(preds: List[Dict],
                 args = [[[w for a in arg for w in a]] for arg in args]
             # iterate through all the combinations
             for arg in itertools.product(*args):
-                calc_prob = lambda x: np.mean(np.log(np.clip(x, 1e-5, 1 - 1e-5)))
+                if keep_ext_prob:
+                    calc_prob = lambda x: np.sum(np.log(np.clip(x, 1e-5, 1 - 1e-5)))
+                else:
+                    calc_prob = lambda x: np.mean(np.log(np.clip(x, 1e-5, 1 - 1e-5)))
                 exts.append(Extraction(sent=tokens, pred=pred, args=arg, probs=probs, calc_prob=calc_prob))
     print('{} extractions are truncated, {} extractions have more than one predicates'.format(
         n_trunc_ext, n_more_pred))
@@ -147,6 +154,8 @@ if __name__ == '__main__':
     parser.add_argument('--unmerge', help='whether to generate multiple extraction for one predicate',
                         action='store_true')
     parser.add_argument('--keep_one', help='whether to keep only the first argument for each position',
+                        action='store_true')
+    parser.add_argument('--keep_ext_prob', help='whether to keep only the probability involved in the extraction',
                         action='store_true')
     parser.add_argument('--method', type=str, default='model', choices=['openie', 'srl'])
     args = parser.parse_args()
@@ -185,7 +194,7 @@ if __name__ == '__main__':
     else:
         raise ValueError
     exts = allennlp_prediction_to_extraction(preds, max_n_arg=10, merge=not args.unmerge,
-                                             keep_one=args.keep_one)
+                                             keep_one=args.keep_one, keep_ext_prob=args.keep_ext_prob)
     with open(args.out, 'w') as fout:
         for ext in exts:
             fout.write('{}\n'.format(ext))
