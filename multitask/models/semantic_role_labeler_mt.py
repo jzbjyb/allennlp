@@ -13,7 +13,7 @@ from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
-from allennlp.training.metrics import SpanBasedF1Measure
+from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
 @Model.register("srl_mt")
@@ -72,6 +72,7 @@ class SemanticRoleLabelerMultiTask(Model):
         # For the span based evaluation, we don't want to consider labels
         # for verb, because the verb index is provided to the model.
         self.span_metric = SpanBasedF1Measure(vocab, tag_namespace="labels", ignore_classes=["V"])
+        self.accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
 
         self.encoder = encoder
         self.task_encoder = task_encoder
@@ -93,7 +94,7 @@ class SemanticRoleLabelerMultiTask(Model):
             labels = self.vocab.get_index_to_token_vocabulary('labels')
             constraints = allowed_transitions('BIO', labels)
             self.crf = ConditionalRandomField(
-                self.num_classes, constraints, include_start_end_transitions=False)
+                self.num_classes, constraints=constraints, include_start_end_transitions=False)
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                encoder.get_input_dim(),
                                "text embedding dim + verb indicator embedding dim",
@@ -168,10 +169,17 @@ class SemanticRoleLabelerMultiTask(Model):
             predicted_tags = [x for x, y in self.crf.viterbi_tags(logits, mask)]
             output_dict['tags'] = predicted_tags
             # pseudo class prob
+            vtags = verb_indicator * 0
+            for i, instance_tags in enumerate(predicted_tags):
+                for j, tag_id in enumerate(instance_tags):
+                    vtags[i, j] = tag_id
+            vll = self.crf(logits, vtags, mask, agg=None)
+            vll /= mask.sum(1).float() + 1e-13  # average over words in each seq
+            evll = torch.exp(vll)
             class_probabilities = logits * 0.
             for i, instance_tags in enumerate(predicted_tags):
                 for j, tag_id in enumerate(instance_tags):
-                    class_probabilities[i, j, tag_id] = 1
+                    class_probabilities[i, j, tag_id] = evll[i]
             output_dict['class_probabilities'] = class_probabilities
         else:
             class_probabilities = F.softmax(reshaped_log_probs, dim=-1).view(
@@ -189,6 +197,11 @@ class SemanticRoleLabelerMultiTask(Model):
             output_dict["loss"] = loss
             if not self.ignore_span_metric:
                 self.span_metric(output_dict['class_probabilities'], tags, mask)
+            if self.use_crf:
+                # TODO: we should use logits here, but class_probabilities seems to be a good replacement
+                self.accuracy(output_dict['class_probabilities'], tags, mask)
+            else:
+                self.accuracy(logits, tags, mask)
 
         # We need to retain the mask in the output dictionary
         # so that we can crop the sequences to remove padding
@@ -240,14 +253,14 @@ class SemanticRoleLabelerMultiTask(Model):
         if self.ignore_span_metric:
             # Return an empty dictionary if ignoring the
             # span metric
-            return {}
-
+            metric_dict = {}
         else:
             metric_dict = self.span_metric.get_metric(reset=reset)
-
             # This can be a lot of metrics, as there are 3 per class.
             # we only really care about the overall metrics, so we filter for them here.
-            return {x: y for x, y in metric_dict.items() if "overall" in x}
+            metric_dict = {x: y for x, y in metric_dict.items() if 'overall' in x}
+        metric_dict['accuracy'] = self.accuracy.get_metric(reset=reset)
+        return metric_dict
 
     def get_viterbi_pairwise_potentials(self):
         """
