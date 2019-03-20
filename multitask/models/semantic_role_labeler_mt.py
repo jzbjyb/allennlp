@@ -196,7 +196,20 @@ class SemanticRoleLabelerMultiTask(Model):
                     logits, tags, mask, label_smoothing=self._label_smoothing)
             output_dict["loss"] = loss
             if not self.ignore_span_metric:
-                self.span_metric(output_dict['class_probabilities'], tags, mask)
+                if self.use_crf:
+                    self.span_metric(output_dict['class_probabilities'], tags, mask)
+                else:
+                    # to be consistent with test-time useage, we use tag sequence
+                    # derived by viterbi to monitor the span f1 performance.
+                    od = {'class_probabilities': output_dict['class_probabilities'], 'mask': mask}
+                    od = self.decode(od)
+                    cp = output_dict['class_probabilities'] * 0.
+                    for i, instance_tags in enumerate(od['tags']):
+                        for j, tag_id in enumerate(instance_tags):
+                            tag_id = self.vocab.get_token_index(tag_id, namespace='labels')
+                            cp[i, j, tag_id] = output_dict['class_probabilities'][i, j, tag_id]
+                    self.span_metric(cp, tags, mask)
+                    #self.span_metric(output_dict['class_probabilities'], tags, mask)
             if self.use_crf:
                 # TODO: we should use logits here, but class_probabilities seems to be a good replacement
                 self.accuracy(output_dict['class_probabilities'], tags, mask)
