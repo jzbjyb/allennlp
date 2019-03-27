@@ -53,6 +53,7 @@
     "patience": 10,
     "num_serialized_models_to_keep": 10,
     "validation_metric": "+f1-measure-overall",
+    //"validation_metric": "+accuracy",
     "cuda_device": 0,
     "optimizer": {
       "type": "adadelta",
