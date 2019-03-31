@@ -9,41 +9,10 @@ from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataF
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
-import torch
+from multitask.dataset_readers.util import IntField, FloadField
+
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
-
-
-class IntField(Field[int]):
-    def __init__(self, value: int) -> None:
-        self.value = value
-
-    @overrides
-    def get_padding_lengths(self) -> Dict[str, int]:
-        return {}
-
-    @overrides
-    def as_tensor(self, padding_lengths: Dict[str, int]) -> torch.Tensor:
-        return torch.tensor(self.value, dtype=torch.long)
-
-    def __str__(self) -> str:
-        return 'IntFeild'
-
-
-class FloadField(Field[float]):
-    def __init__(self, value: float) -> None:
-        self.value = value
-
-    @overrides
-    def get_padding_lengths(self) -> Dict[str, int]:
-        return {}
-
-    @overrides
-    def as_tensor(self, padding_lengths: Dict[str, int]) -> torch.Tensor:
-        return torch.tensor(self.value, dtype=torch.float)
-
-    def __str__(self) -> str:
-        return 'FloatFeild'
 
 
 class SupOieConllExtraction:

@@ -237,7 +237,13 @@ class OpenIePredictor(Predictor):
             cur_tags, cur_probs = [], []
             for vpath in vpaths:
                 probs = [p[i, vpath[i]] for i in range(len(vpath))]
-                tags = [self._model.vocab.get_token_from_index(x, namespace='labels') for x in vpath]
+                # TODO: any better way to handle the mismatch between normal model and multitask model?
+                if 'labels' in self._model.vocab._index_to_token:
+                    tags = [self._model.vocab.get_token_from_index(x, namespace='labels') for x in vpath]
+                elif 'MT_gt_labels' in self._model.vocab._index_to_token:
+                    tags = [self._model.vocab.get_token_from_index(x, namespace='MT_gt_labels') for x in vpath]
+                else:
+                    raise KeyError('what is the namespace of the tags?')
                 cur_probs.append(probs)
                 cur_tags.append(tags)
             all_probs.append(cur_probs)

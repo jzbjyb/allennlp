@@ -1,4 +1,4 @@
-from typing import Dict, List, TextIO, Optional, Any
+from typing import Dict, List, TextIO, Optional, Any, Tuple
 
 from overrides import overrides
 import torch
@@ -15,6 +15,7 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
+
 
 @Model.register("srl_mt")
 class SemanticRoleLabelerMultiTask(Model):
@@ -63,48 +64,161 @@ class SemanticRoleLabelerMultiTask(Model):
                  ignore_span_metric: bool = False,
                  use_crf: bool = False) -> None:
         super(SemanticRoleLabelerMultiTask, self).__init__(vocab, regularizer)
+        self._label_smoothing = label_smoothing
+        self.ignore_span_metric = ignore_span_metric
+        self.use_crf = use_crf  # whether to use CRF decoding
 
+        # task-agnostic components
         self.text_field_embedder = text_field_embedder
-        self.num_classes = self.vocab.get_vocab_size("labels")
-        self.num_tasks = self.vocab.get_vocab_size("task_labels")
-        self.register_buffer('_task', torch.arange(self.num_tasks).view([1, -1]))
-
-        # For the span based evaluation, we don't want to consider labels
-        # for verb, because the verb index is provided to the model.
-        self.span_metric = SpanBasedF1Measure(vocab, tag_namespace="labels", ignore_classes=["V"])
-        self.accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
-
+        self.binary_feature_embedding = Embedding(2, binary_feature_dim)
+        self.embedding_dropout = Dropout(p=embedding_dropout)
         self.encoder = encoder
-        self.task_encoder = task_encoder
         for param in self.encoder.parameters():
             param.requires_grad = encoder_requires_grad
+        self.task_encoder = task_encoder
         if self.task_encoder is not None:
             for param in self.task_encoder.parameters():
                 param.requires_grad = task_encoder_requires_grad
-        # There are exactly 2 binary features for the verb predicate embedding.
-        self.binary_feature_embedding = Embedding(2, binary_feature_dim)
-        self.tag_projection_layer_mt = TimeDistributed(
-            Linear(self.encoder.get_output_dim(), self.num_tasks * self.num_classes))
-        self.embedding_dropout = Dropout(p=embedding_dropout)
-        self._label_smoothing = label_smoothing
-        self.ignore_span_metric = ignore_span_metric
-        # set up crf
-        self.use_crf = use_crf  # whether to use CRF decoding
-        if self.use_crf:
-            labels = self.vocab.get_index_to_token_vocabulary('labels')
-            constraints = allowed_transitions('BIO', labels)
-            self.crf = ConditionalRandomField(
-                self.num_classes, constraints=constraints, include_start_end_transitions=False)
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                encoder.get_input_dim(),
-                               "text embedding dim + verb indicator embedding dim",
-                               "encoder input dim")
+                               'text embedding dim + verb indicator embedding dim',
+                               'encoder input dim')
+
+        # task-related components
+        self.num_tasks = self.vocab.get_vocab_size('task_labels')
+        self.ind_task_map = self.vocab.get_index_to_token_vocabulary('task_labels').items()
+        for task_ind, task_name in self.ind_task_map:
+            label_ns = 'MT_{}_labels'.format(task_name)
+            setattr(self, '{}_num_classes'.format(task_name),
+                    self.vocab.get_vocab_size(label_ns))
+            num_classes = getattr(self, '{}_num_classes'.format(task_name))
+            setattr(self, '{}_tag_projection_layer'.format(task_name),
+                    TimeDistributed(Linear(self.encoder.get_output_dim(), num_classes)))
+            if self.use_crf:
+                labels = self.vocab.get_index_to_token_vocabulary(label_ns)
+                constraints = allowed_transitions('BIO', labels)
+                setattr(self, '{}_crf'.format(task_name), ConditionalRandomField(
+                    num_classes, constraints=constraints, include_start_end_transitions=False))
+            # metrics (track the performance of different tasks separately)
+            setattr(self, '{}_span_metric'.format(task_name),
+                    SpanBasedF1Measure(vocab, tag_namespace=label_ns, ignore_classes=['V']))
+            setattr(self, '{}_accuracy'.format(task_name), CategoricalAccuracy(top_k=1, tie_break=False))
+
         initializer(self)
+
+
+    def task_agnostic_comp(self, tokens: Dict[str, torch.LongTensor],
+                           verb_indicator: torch.LongTensor,
+                           task_labels: torch.LongTensor,
+                           weight: torch.FloatTensor,
+                           tags: torch.LongTensor = None,
+                           metadata: List[Dict[str, Any]] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        text_emb = self.embedding_dropout(self.text_field_embedder(tokens))
+        verb_emb = self.binary_feature_embedding(verb_indicator.long())
+        concat_emb = torch.cat([text_emb, verb_emb], -1)
+
+        mask = get_text_field_mask(tokens)
+
+        enc = self.encoder(concat_emb, mask)
+        if self.task_encoder is not None:
+            enc = self.task_encoder(enc, mask)
+
+        return enc, mask
+
 
     def forward(self,  # type: ignore
                 tokens: Dict[str, torch.LongTensor],
                 verb_indicator: torch.LongTensor,
                 task_labels: torch.LongTensor,
+                weight: torch.FloatTensor,
+                tags: torch.LongTensor = None,
+                metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
+
+        # task-agnostic components
+        enc, mask = self.task_agnostic_comp(
+            tokens, verb_indicator, task_labels, weight, tags, metadata)
+
+        # task-related components
+        output_dict = {}
+        all_loss = 0.0
+        for task_ind, task_name in self.ind_task_map:
+            # get samples of this task
+            bs, sl, hs = enc.size()
+            task_mask = task_labels.eq(task_ind)
+            # SHAPE: (task_batch_size, seq_len, hidden_size)
+            t_enc = enc.masked_select(task_mask.view(-1, 1, 1)).view(-1, sl, hs)
+            if t_enc.size(0) == 0:
+                continue # skip when the task is not found in the current batch
+            # SHAPE: (task_batch_size, seq_len)
+            t_mask = mask.masked_select(task_mask.view(-1, 1)).view(-1, sl)
+            # SHAPE: (task_batch_size,)
+            t_weight = weight.masked_select(task_mask)
+            t_bs, t_sl, = t_mask.size()
+
+            # get metadata of the current task
+            num_classes = getattr(self, '{}_num_classes'.format(task_name))
+            label_ns = 'MT_{}_labels'.format(task_name)
+
+            # prediction
+            t_logits = getattr(self, '{}_tag_projection_layer'.format(task_name))(t_enc)
+
+            output_dict['logits'] = t_logits # TODO
+            output_dict['mask'] = t_mask # TODO
+            # calculate prob
+            if self.use_crf:
+                t_pred_tags = [x for x, y in self.crf.viterbi_tags(t_logits, t_mask)]
+                output_dict['tags'] = t_pred_tags # TODO
+                # pseudo class prob
+                t_pred_tags_tensor = t_mask * 0
+                for i, inst_tags in enumerate(t_pred_tags_tensor):
+                    for j, tag_id in enumerate(inst_tags):
+                        t_pred_tags_tensor[i, j] = tag_id
+                pll = self.crf(t_logits, t_pred_tags_tensor, t_mask, agg=None)
+                pll /= t_mask.sum(1).float() + 1e-13  # average over words in each seq
+                epll = torch.exp(pll)
+                t_cp = t_logits * 0.
+                for i, inst_tags in enumerate(t_pred_tags_tensor):
+                    for j, tag_id in enumerate(inst_tags):
+                        t_cp[i, j, tag_id] = epll[i]
+                output_dict['class_probabilities'] = t_cp # TODO
+            else:
+                t_cp = F.softmax(t_logits.view(-1, num_classes), dim=-1).view([t_bs, t_sl, num_classes])
+                output_dict['class_probabilities'] = t_cp # TODO
+
+            if tags is not None:
+                # SHAPE: (task_batch_size, seq_len)
+                t_tags = tags.masked_select(task_mask.view(-1, 1)).view(-1, sl)
+                # calculate loss
+                if self.use_crf:
+                    ll = self.crf(t_logits, t_tags, t_mask, agg=None)
+                    ll /= mask.sum(1).float() + 1e-13 # average over words in each seq
+                else:
+                    ll = -sequence_cross_entropy_with_logits(
+                        t_logits, t_tags, t_mask, average=None, label_smoothing=self._label_smoothing)
+                t_loss = -(ll * t_weight).sum() / ((t_mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
+                all_loss += -(ll * t_weight).sum()
+                # calculate metrics
+                if not self.ignore_span_metric:
+                    getattr(self, '{}_span_metric'.format(task_name))(t_cp, t_tags, t_mask)
+                if self.use_crf:
+                    getattr(self, '{}_accuracy'.format(task_name))(t_cp, t_tags, t_mask)
+                else:
+                    getattr(self, '{}_accuracy'.format(task_name))(t_logits, t_tags, t_mask)
+
+        # merge from different tasks
+        output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
+        if metadata is not None:
+            words, verbs = zip(*[(x['words'], x['verb']) for x in metadata])
+            output_dict['words'] = list(words)
+            output_dict['verb'] = list(verbs)
+        return output_dict
+
+
+    def forward_bak(self,  # type: ignore
+                tokens: Dict[str, torch.LongTensor],
+                verb_indicator: torch.LongTensor,
+                task_labels: torch.LongTensor,
+                weight: torch.FloatTensor,
                 tags: torch.LongTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
@@ -190,10 +304,10 @@ class SemanticRoleLabelerMultiTask(Model):
             if self.use_crf:
                 ll = self.crf(logits, tags, mask, agg=None)
                 ll /= mask.sum(1).float() + 1e-13 # average over words in each seq
-                loss = -ll.sum() / ((mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
             else:
-                loss = sequence_cross_entropy_with_logits(
-                    logits, tags, mask, label_smoothing=self._label_smoothing)
+                ll = -sequence_cross_entropy_with_logits(
+                    logits, tags, mask, average=None, label_smoothing=self._label_smoothing)
+            loss = -(ll * weight).sum() / ((mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
             output_dict["loss"] = loss
             if not self.ignore_span_metric:
                 if self.use_crf:
@@ -255,24 +369,26 @@ class SemanticRoleLabelerMultiTask(Model):
             probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
                      for i in range(len(max_likelihood_sequence))]
             all_probs.append(probs)
-            tags = [self.vocab.get_token_from_index(x, namespace="labels")
-                    for x in max_likelihood_sequence]
+            tags = [self.vocab.get_token_from_index(x, namespace='MT_gt_labels')
+                    for x in max_likelihood_sequence] # TODO: add more task and avoid "gt"
             all_tags.append(tags)
         output_dict['tags'] = all_tags
         output_dict['probs'] = all_probs
         return output_dict
 
     def get_metrics(self, reset: bool = False):
-        if self.ignore_span_metric:
-            # Return an empty dictionary if ignoring the
-            # span metric
-            metric_dict = {}
-        else:
-            metric_dict = self.span_metric.get_metric(reset=reset)
-            # This can be a lot of metrics, as there are 3 per class.
-            # we only really care about the overall metrics, so we filter for them here.
-            metric_dict = {x: y for x, y in metric_dict.items() if 'overall' in x}
-        metric_dict['accuracy'] = self.accuracy.get_metric(reset=reset)
+        metric_dict = {}
+        # span metric
+        if not self.ignore_span_metric:
+            for task_ind, task_name in self.ind_task_map:
+                sm = getattr(self, '{}_span_metric'.format(task_name)).get_metric(reset=reset)
+                sm = {'{}_{}'.format(task_name, x): y
+                      for x, y in sm.items() if 'f1-measure-overall' in x}
+                metric_dict.update(sm)
+        # accuracy
+        for task_ind, task_name in self.ind_task_map:
+            metric_dict['{}_accuracy'.format(task_name)] = \
+                getattr(self, '{}_accuracy'.format(task_name)).get_metric(reset=reset)
         return metric_dict
 
     def get_viterbi_pairwise_potentials(self):
@@ -288,7 +404,8 @@ class SemanticRoleLabelerMultiTask(Model):
         transition_matrix : torch.Tensor
             A (num_labels, num_labels) matrix of pairwise potentials.
         """
-        all_labels = self.vocab.get_index_to_token_vocabulary("labels")
+        # TODO: add more task and avoid "gt"
+        all_labels = self.vocab.get_index_to_token_vocabulary('MT_gt_labels')
         num_labels = len(all_labels)
         transition_matrix = torch.zeros([num_labels, num_labels])
 
@@ -297,5 +414,5 @@ class SemanticRoleLabelerMultiTask(Model):
                 # I labels can only be preceded by themselves or
                 # their corresponding B tag.
                 if i != j and label[0] == 'I' and not previous_label == 'B' + label[1:]:
-                    transition_matrix[i, j] = float("-inf")
+                    transition_matrix[i, j] = float('-inf')
         return transition_matrix

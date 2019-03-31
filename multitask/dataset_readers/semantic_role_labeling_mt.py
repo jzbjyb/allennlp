@@ -1,18 +1,19 @@
 import logging
-from typing import Dict, List, Iterable
+from typing import Dict, List, Iterable, Union
 
 from overrides import overrides
 from operator import itemgetter
 import numpy as np
 
 from allennlp.common.file_utils import cached_path
+from allennlp.common.params import Params
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataField, LabelField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 from allennlp.data.dataset_readers.dataset_utils import Ontonotes, OntonotesSentence
-
+from multitask.dataset_readers.util import FloadField
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -46,49 +47,81 @@ class SrlReaderMultiTask(DatasetReader):
 
     """
     def __init__(self,
-                 default_task = 'gt', # "gt" is the default task (ground truth)
+                 # "gt" is the default task (ground truth)
+                 default_task: str = 'gt',
+                 # yield up samples from multiple files uniformly
+                 multiple_files: bool = False,
+                 # whether to restart iterating a file when it is exhausted.
+                 # Only effective when `multiple_files` is True
+                 restart_file: bool = True,
+                 # weights of each task with the number of samples considered
+                 task_weight: Union[Params, Dict[str, float]] = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
         super().__init__(lazy)
         self._default_task = default_task
+        if type(task_weight) is Params: # directly configured by json file
+            task_weight = task_weight.as_dict()
+        self._multiple_files = multiple_files
+        self._restart_file = restart_file
+        self._task_weight = task_weight
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
 
     @overrides
     def _read(self, file_path: str):
-        # if `file_path` is a URL, redirect to the cache
-        file_path = cached_path(file_path)
-        ontonotes_reader = Ontonotes()
-        logger.info("Reading SRL instances from dataset files at: %s", file_path)
+        logger.info('Reading multitask instances from dataset files at: {}'.format(file_path))
         if self._domain_identifier is not None:
-            logger.info("Filtering to only include file paths containing the %s domain", self._domain_identifier)
+            logger.info('Filtering to only include file paths containing the {} domain'.format(
+                self._domain_identifier))
+        if self._multiple_files:
+            # iterate through multiple files uniformly
+            file_path_li = file_path.split(':')
+            readers = [self._read_one_file(file_path) for file_path in file_path_li]
+            stop_set = set()
+            restart = 0
+            while True:
+                buf: List[Instance] = []
+                for i, reader in enumerate(readers):
+                    try:
+                        buf.append(reader.__next__())
+                    except StopIteration:
+                        stop_set.add(i)
+                        if self._restart_file:
+                            restart += 1
+                            # restart the current file
+                            readers[i] = self._read_one_file(file_path_li[i])
+                            buf.append(readers[i].__next__())
+                if len(stop_set) >= len(file_path_li): # all files are exhausted
+                    break
+                yield from buf
+        else:
+            # only one file
+            yield from self._read_one_file(file_path)
 
-        for sentence in self._ontonotes_subset(ontonotes_reader, file_path, self._domain_identifier):
+    def _read_one_file(self, file_path: str):
+        # if `file_path` is a URL, redirect to the cache
+        #file_path = cached_path(file_path)
+        ontonotes_reader = Ontonotes()
+        for sentence in ontonotes_reader.sentence_iterator(file_path):
             tokens = [Token(t) for t in sentence.words]
-            if not sentence.srl_frames:
-                # Sentence contains no predicates.
-                tags = ["O" for _ in tokens]
-                verb_label = [0 for _ in tokens]
-                yield self.text_to_instance(tokens, verb_label, tags)
-            else:
+            if sentence.srl_frames:
+                # skip sentence with no predicates because we don't know which task it should be
                 for (_, tts) in sentence.srl_frames:
                     # "#" is used to separate tag and task (for example, "ARG0#openie4")
                     tags, tasks = [], []
                     for tt in tts:
-                        tt = tt.split('#')
-                        if len(tt) > 2:
-                            print(tt)
-                            raise ValueError('tag is not valid multi-task format')
-                        tags.append(tt[0])
-                        if len(tt) == 2:
-                            tasks.append(tt[1])
-                    verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
-                    task = tasks[0] if len(tasks) > 0 else None
-                    if not task:
-                        pass
-                        #raise ValueError('no task found') # all of the tags don't contain task information
-                    elif len(np.unique(tasks)) != 1:
+                        tt_li = tt.split('#')
+                        if len(tt_li) > 2:
+                            print(tt_li)
+                            raise ValueError('tag is not in valid multi-task format')
+                        tags.append(tt_li[0]) # tag should not include task
+                        if len(tt_li) == 2:
+                            tasks.append(tt_li[1])
+                    verb_indicator = [1 if label[-2:] == '-V' else 0 for label in tags]
+                    task = tasks[0] if len(tasks) > 0 else None # if None, use default task
+                    if task is not None and len(np.unique(tasks)) != 1:
                         raise ValueError('inconsistent task')
                     yield self.text_to_instance(tokens, verb_indicator, task=task, tags=tags)
 
@@ -122,13 +155,14 @@ class SrlReaderMultiTask(DatasetReader):
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
         task = task or self._default_task
         fields['task_labels'] = LabelField(task, label_namespace='task_labels')
+        weight = self._task_weight[task] or 1.0
+        fields['weight'] = FloadField(weight)
         if tags:
-            fields['tags'] = SequenceLabelField(tags, text_field)
-
+            # use different namespaces for different task
+            fields['tags'] = SequenceLabelField(tags, text_field, 'MT_{}_labels'.format(task))
         if all([x == 0 for x in verb_label]):
             verb = None
         else:
             verb = tokens[verb_label.index(1)].text
-        fields["metadata"] = MetadataField({"words": [x.text for x in tokens],
-                                            "verb": verb})
+        fields['metadata'] = MetadataField({'words': [x.text for x in tokens], 'verb': verb})
         return Instance(fields)
