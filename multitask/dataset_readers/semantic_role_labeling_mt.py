@@ -54,6 +54,9 @@ class SrlReaderMultiTask(DatasetReader):
                  # whether to restart iterating a file when it is exhausted.
                  # Only effective when `multiple_files` is True
                  restart_file: bool = True,
+                 # The ratio of samples drawn from each file.
+                 # Only effective when `multiple_files` is True
+                 multiple_files_sample_rate: List[int] = None,
                  # weights of each task with the number of samples considered
                  task_weight: Union[Params, Dict[str, float]] = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
@@ -61,10 +64,11 @@ class SrlReaderMultiTask(DatasetReader):
                  lazy: bool = False) -> None:
         super().__init__(lazy)
         self._default_task = default_task
-        if type(task_weight) is Params: # directly configured by json file
-            task_weight = task_weight.as_dict()
         self._multiple_files = multiple_files
         self._restart_file = restart_file
+        self._multiple_files_sample_rate = multiple_files_sample_rate
+        if type(task_weight) is Params: # directly configured by json file
+            task_weight = task_weight.as_dict()
         self._task_weight = task_weight
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
@@ -76,24 +80,32 @@ class SrlReaderMultiTask(DatasetReader):
             logger.info('Filtering to only include file paths containing the {} domain'.format(
                 self._domain_identifier))
         if self._multiple_files:
-            # iterate through multiple files uniformly
             file_path_li = file_path.split(':')
+            # iterate through multiple files accroding to the ratio of `multiple_files_sample_rate`
+            if self._multiple_files_sample_rate is None:
+                # use uniform sampling as default
+                self._multiple_files_sample_rate = [1] * len(file_path_li)
+            assert len(self._multiple_files_sample_rate) == len(file_path_li), \
+                'number of items in multiple_files_sample_rate should be the same as the number of files'
+            for sr in self._multiple_files_sample_rate:
+                assert type(sr) is int, 'multiple_files_sample_rate must be a list of int'
             readers = [self._read_one_file(file_path) for file_path in file_path_li]
             stop_set = set()
             restart = 0
             while True:
                 buf: List[Instance] = []
-                for i, reader in enumerate(readers):
-                    try:
-                        buf.append(reader.__next__())
-                    except StopIteration:
-                        stop_set.add(i)
-                        if self._restart_file:
-                            restart += 1
-                            # restart the current file
-                            readers[i] = self._read_one_file(file_path_li[i])
-                            buf.append(readers[i].__next__())
-                if len(stop_set) >= len(file_path_li): # all files are exhausted
+                for i, (reader, sr) in enumerate(zip(readers, self._multiple_files_sample_rate)):
+                    for j in range(sr): # yield up `sr` samples from the current file
+                        try:
+                            buf.append(reader.__next__())
+                        except StopIteration:
+                            stop_set.add(i)
+                            if self._restart_file:
+                                restart += 1
+                                # restart the current file
+                                readers[i] = self._read_one_file(file_path_li[i])
+                                buf.append(readers[i].__next__())
+                if len(stop_set) >= len(file_path_li): # exit when all the files are exhausted
                     break
                 yield from buf
         else:
