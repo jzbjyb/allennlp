@@ -4,7 +4,7 @@
     "default_task": "gt",
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
-    "task_weight": {"gt": 1.0, "srl": 1.0},
+    "task_weight": {"gt": 1.33, "srl": 0.67},
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
