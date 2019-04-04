@@ -167,7 +167,7 @@ class SrlReaderMultiTask(DatasetReader):
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
         task = task or self._default_task
         fields['task_labels'] = LabelField(task, label_namespace='task_labels')
-        weight = self._task_weight[task] or 1.0
+        weight = self._task_weight[task] # use the weight in config without modification
         fields['weight'] = FloadField(weight)
         if tags:
             # use different namespaces for different task
