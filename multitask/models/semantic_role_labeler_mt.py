@@ -52,13 +52,15 @@ class SemanticRoleLabelerMultiTask(Model):
     """
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
-                 encoder: Seq2SeqEncoder,
+                 encoder: Seq2SeqEncoder,  # the base encoder shared across tasks
                  binary_feature_dim: int,
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
-                 task_encoder: Seq2SeqEncoder = None,
+                 more_encoder: Seq2SeqEncoder = None,  # the additional encoder shared across tasks
+                 task_encoder: Dict[str, Seq2SeqEncoder] = None,  # task-specific encoder
                  encoder_requires_grad: bool = True,
-                 task_encoder_requires_grad: bool = True,
+                 more_encoder_requires_grad: bool = True,
+                 task_encoder_requires_grad: Dict[str, bool] = None,
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
                  ignore_span_metric: bool = False,
@@ -75,23 +77,34 @@ class SemanticRoleLabelerMultiTask(Model):
         self.encoder = encoder
         for param in self.encoder.parameters():
             param.requires_grad = encoder_requires_grad
-        self.task_encoder = task_encoder
-        if self.task_encoder is not None:
-            for param in self.task_encoder.parameters():
-                param.requires_grad = task_encoder_requires_grad
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                encoder.get_input_dim(),
                                'text embedding dim + verb indicator embedding dim',
                                'encoder input dim')
+        self.more_encoder = more_encoder
+        if self.more_encoder is not None:
+            for param in self.more_encoder.parameters():
+                param.requires_grad = more_encoder_requires_grad
 
         # task-related components
+        self.task_encoder = task_encoder
         self.num_tasks = self.vocab.get_vocab_size('task_labels')
         self.ind_task_map = self.vocab.get_index_to_token_vocabulary('task_labels').items()
         for task_ind, task_name in self.ind_task_map:
+            # basic task properties
             label_ns = 'MT_{}_labels'.format(task_name)
             setattr(self, '{}_num_classes'.format(task_name),
                     self.vocab.get_vocab_size(label_ns))
             num_classes = getattr(self, '{}_num_classes'.format(task_name))
+            # task encoder
+            if self.task_encoder is not None and task_name in self.task_encoder:
+                print('{} : {}'.format(task_name, task_encoder_requires_grad[task_name]))
+                setattr(self, '{}_task_encoder'.format(task_name), self.task_encoder[task_name])
+                for param in getattr(self, '{}_task_encoder'.format(task_name)).parameters():
+                    param.requires_grad = task_encoder_requires_grad[task_name]
+            else:
+                setattr(self, '{}_task_encoder'.format(task_name), None)
+            # task projection
             setattr(self, '{}_tag_projection_layer'.format(task_name),
                     TimeDistributed(Linear(self.encoder.get_output_dim(), num_classes)))
             if self.use_crf:
@@ -120,8 +133,8 @@ class SemanticRoleLabelerMultiTask(Model):
         mask = get_text_field_mask(tokens)
 
         enc = self.encoder(concat_emb, mask)
-        if self.task_encoder is not None:
-            enc = self.task_encoder(enc, mask)
+        if self.more_encoder is not None:
+            enc = self.more_encoder(enc, mask)
 
         return enc, mask
 
@@ -158,6 +171,9 @@ class SemanticRoleLabelerMultiTask(Model):
             # get metadata of the current task
             num_classes = getattr(self, '{}_num_classes'.format(task_name))
             label_ns = 'MT_{}_labels'.format(task_name)
+
+            if getattr(self, '{}_task_encoder'.format(task_name)) is not None: # task encoder
+                t_enc = getattr(self, '{}_task_encoder'.format(task_name))(t_enc, t_mask)
 
             # prediction
             t_logits = getattr(self, '{}_tag_projection_layer'.format(task_name))(t_enc)
@@ -267,8 +283,8 @@ class SemanticRoleLabelerMultiTask(Model):
         batch_size, sequence_length, _ = embedded_text_with_verb_indicator.size()
 
         encoded_text = self.encoder(embedded_text_with_verb_indicator, mask)
-        if self.task_encoder is not None:
-            encoded_text = self.task_encoder(encoded_text, mask)
+        if self.more_encoder is not None:
+            encoded_text = self.more_encoder(encoded_text, mask)
 
         logits = self.tag_projection_layer_mt(encoded_text)
         # get the logits of the corresponding task

@@ -67,8 +67,6 @@ class SrlReaderMultiTask(DatasetReader):
         self._multiple_files = multiple_files
         self._restart_file = restart_file
         self._multiple_files_sample_rate = multiple_files_sample_rate
-        if type(task_weight) is Params: # directly configured by json file
-            task_weight = task_weight.as_dict()
         self._task_weight = task_weight
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
