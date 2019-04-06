@@ -147,8 +147,9 @@ class SemanticRoleLabelerPredictor(Predictor):
         # get instances and raw tags
         instances = []
         raw_tags_li = []
+        verb_indicator_li = []
         ontonotes_reader = Ontonotes()
-        total_ct, emp_ct = 0, 0
+        emp_ct = 0
         for sentence in ontonotes_reader.sentence_iterator(conll_filepath):
             tokens = [Token(t) for t in sentence.words]
             if not sentence.srl_frames:
@@ -156,25 +157,28 @@ class SemanticRoleLabelerPredictor(Predictor):
                 continue # skip sentence without predicate
             else:
                 for (_, tags) in sentence.srl_frames:
-                    total_ct += 1
-                    verb_indicator = [1 if label[-2:] == "-V" else 0 for label in tags]
+                    verb_indicator = [1 if label[-2:] == '-V' else 0 for label in tags]
+                    if sum(verb_indicator) != 1:
+                        emp_ct += 1
+                        continue
                     instances.append(self._dataset_reader.text_to_instance(tokens, verb_indicator))
                     raw_tags_li.append(tags)
+                    verb_indicator_li.append(verb_indicator)
         print('{} empty sentences'.format(emp_ct))
-        print('{} instances'.format(total_ct))
+        print('{} instances'.format(len(instances)))
         # run the model
         outputs = []
         for batch in range(0, len(instances), batch_size):
             batch = instances[batch:batch + batch_size]
             outputs.extend(self._model.forward_on_instances(batch))
         result_li = []
-        for output, raw_tags in zip(outputs, raw_tags_li):
+        for output, raw_tags, verb_indicator in zip(outputs, raw_tags_li, verb_indicator_li):
             words = output['words']
             tags = output['tags']
             description = self.make_srl_string(words, tags)
             result = {
                 'words': words,
-                'verb': output['verb'],
+                'verb': verb_indicator,
                 'description': description,
                 'tags': tags,
                 'raw_tags': raw_tags

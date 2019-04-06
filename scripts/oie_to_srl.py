@@ -31,7 +31,7 @@ def get_coordination_ext(conll_filepath, debug=False):
     print('{} coordination extractions'.format(coordination_count))
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='convert conll file to srl predictions')
+    parser = argparse.ArgumentParser(description='convert oie conll file to srl predictions')
     parser.add_argument('--model', type=str, help='model file', required=True)
     parser.add_argument('--inp', type=str, help='input conll file.', required=True)
     parser.add_argument('--out', type=str, help='output file.', required=True)
@@ -47,9 +47,14 @@ if __name__ == '__main__':
     with open(args.out, 'w') as fout:
         for result in results:
             if args.format == 'tagging':
-                raw_tags = result['raw_tags'] # supposed to be openie tags
-                tags = result['tags'] # supposed to be srl tags
-                assert len(tags) == len(raw_tags), 'tag seq len inconsistent'
-                sent = ' '.join(map(lambda x: '{}/{}'.format(*x), zip(tags, raw_tags)))
+                words = result['words']  # word sequence
+                verb = result['verb']  # verb indicators (0/1)
+                tags = result['tags']  # supposed to be srl tags
+                raw_tags = result['raw_tags']  # supposed to be openie tags
+                assert len(words) == len(verb) and len(words) == len(raw_tags) and len(words) == len(tags), \
+                    'seq len inconsistent'
+                # word verb srl oie
+                sent = '\t'.join(map(lambda x: '{} {} {} {}'.format(*x), zip(words, verb, tags, raw_tags)))
                 fout.write('{}\n'.format(sent))
-
+            else:
+                raise NotImplementedError

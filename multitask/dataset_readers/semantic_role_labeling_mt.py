@@ -47,6 +47,9 @@ class SrlReaderMultiTask(DatasetReader):
 
     """
     def __init__(self,
+                 # format of the input file, "conll" by default,
+                 # and "parallel" for all_tagging suffix
+                 file_format: str = 'conll',
                  # "gt" is the default task (ground truth)
                  default_task: str = 'gt',
                  # yield up samples from multiple files uniformly
@@ -63,6 +66,8 @@ class SrlReaderMultiTask(DatasetReader):
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
         super().__init__(lazy)
+        assert file_format in {'conll', 'parallel'}, 'file_format not supported'
+        self._file_format = file_format
         self._default_task = default_task
         self._multiple_files = multiple_files
         self._restart_file = restart_file
@@ -70,9 +75,19 @@ class SrlReaderMultiTask(DatasetReader):
         self._task_weight = task_weight
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
+        if file_format == 'conll':
+            self.text_to_instance = self.text_to_instance_conll
+        elif file_format == 'parallel':
+            self.text_to_instance = self.text_to_instance_parallel
 
     @overrides
     def _read(self, file_path: str):
+        if self._file_format == 'conll':
+            yield from self._read_conll(file_path)
+        elif self._file_format == 'parallel':
+            yield from self._read_parallel(file_path)
+
+    def _read_conll(self, file_path: str):
         logger.info('Reading multitask instances from dataset files at: {}'.format(file_path))
         if self._domain_identifier is not None:
             logger.info('Filtering to only include file paths containing the {} domain'.format(
@@ -110,6 +125,21 @@ class SrlReaderMultiTask(DatasetReader):
             # only one file
             yield from self._read_one_file(file_path)
 
+    def _read_parallel(self, file_path: str):
+        logger.info('Reading parallel instances from dataset files at: {}'.format(file_path))
+        with open(file_path, 'r') as fin:
+            for l in fin:
+                l = l.strip()
+                if len(l) == 0:
+                    continue
+                tokens = l.split('\t')
+                tokens = [t.split(' ') for t in tokens]
+                tokens, verb_inds, srl_tags, oie_tags = zip(*tokens)
+                tokens = [Token(t) for t in tokens]
+                verb_inds = list(map(int, verb_inds))
+                yield self.text_to_instance_parallel(tokens, verb_inds,
+                                                     srl_tags=srl_tags, oie_tags=oie_tags)
+
     def _read_one_file(self, file_path: str):
         # if `file_path` is a URL, redirect to the cache
         #file_path = cached_path(file_path)
@@ -133,7 +163,7 @@ class SrlReaderMultiTask(DatasetReader):
                     task = tasks[0] if len(tasks) > 0 else None # if None, use default task
                     if task is not None and len(np.unique(tasks)) != 1:
                         raise ValueError('inconsistent task')
-                    yield self.text_to_instance(tokens, verb_indicator, task=task, tags=tags)
+                    yield self.text_to_instance_conll(tokens, verb_indicator, task=task, tags=tags)
 
     @staticmethod
     def _ontonotes_subset(ontonotes_reader: Ontonotes,
@@ -148,7 +178,7 @@ class SrlReaderMultiTask(DatasetReader):
             if domain_identifier is None or f"/{domain_identifier}/" in conll_file:
                 yield from ontonotes_reader.sentence_iterator(conll_file)
 
-    def text_to_instance(self,  # type: ignore
+    def text_to_instance_conll(self,  # type: ignore
                          tokens: List[Token],
                          verb_label: List[int],
                          task: str = None,
@@ -170,6 +200,26 @@ class SrlReaderMultiTask(DatasetReader):
         if tags:
             # use different namespaces for different task
             fields['tags'] = SequenceLabelField(tags, text_field, 'MT_{}_labels'.format(task))
+        if all([x == 0 for x in verb_label]):
+            verb = None
+        else:
+            verb = tokens[verb_label.index(1)].text
+        fields['metadata'] = MetadataField({'words': [x.text for x in tokens], 'verb': verb})
+        return Instance(fields)
+
+    def text_to_instance_parallel(self, tokens: List[Token],
+                                  verb_label: List[int],
+                                  srl_tags: List[str] = None,
+                                  oie_tags: List[str] = None) -> Instance:
+        fields: Dict[str, Field] = {}
+        text_field = TextField(tokens, token_indexers=self._token_indexers)
+        fields['tokens'] = text_field
+        fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
+        # TODO: better way than hard-code
+        if srl_tags:
+            fields['srl_tags'] = SequenceLabelField(srl_tags, text_field, 'MT_srl_labels')
+        if oie_tags:
+            fields['oie_tags'] = SequenceLabelField(oie_tags, text_field, 'MT_gt_labels')
         if all([x == 0 for x in verb_label]):
             verb = None
         else:
