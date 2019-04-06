@@ -4,6 +4,7 @@ from overrides import overrides
 import torch
 from torch.nn.modules import Linear, Dropout
 import torch.nn.functional as F
+import torch.distributions as distributions
 
 from allennlp.common.checks import check_dimensions_match
 from allennlp.data import Vocabulary
@@ -116,7 +117,7 @@ class SemiConditionalVAEOIE(Model):
         logits = self.enc_y1_proj(enc)
         if self._sample_num == 1:
             # SHAPE: (batch_size, seq_len)
-            _, y1 = logits.max(-1)
+            y1 = distributions.Categorical(logits=logits).sample()
             # SHAPE: (batch_size,)
             # TODO: the sequence_cross_entropy_with_logits an average across tokens
             y1_nll = sequence_cross_entropy_with_logits(logits, y1, mask, average=None)
