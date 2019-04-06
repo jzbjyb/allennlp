@@ -9,7 +9,9 @@ from allennlp.models import Model
 from allennlp.predictors.predictor import Predictor
 from allennlp.data.tokenizers.word_splitter import SpacyWordSplitter
 from allennlp.data.tokenizers import Token
+from allennlp.data.dataset_readers.dataset_utils import Ontonotes, OntonotesSentence
 from allennlp.nn.util import n_best_viterbi_decode
+
 import torch
 import numpy as np
 import spacy
@@ -251,6 +253,35 @@ class OpenIePredictor(Predictor):
         if one_sam:
             return all_tags[0], all_probs[0]
         return all_tags, all_probs
+
+
+    def predict_conll_file(self, file_dir: str, batch_size: int = 256):
+        ontonotes_reader = Ontonotes()
+        batch_inst, tokens_li, verb_ind_li, srl_tags_li = [], [], [], []
+        for conll_file in ontonotes_reader.dataset_path_iterator(file_dir):
+            for sentence in ontonotes_reader.sentence_iterator(conll_file):
+                tokens = [Token(t) for t in sentence.words]
+                if not sentence.srl_frames:
+                    continue
+                for (_, srl_tags) in sentence.srl_frames:
+                    verb_ind = [1 if label[-2:] == '-V' else 0 for label in srl_tags]
+                    inst = self._dataset_reader.text_to_instance(tokens, verb_ind)
+                    batch_inst.append(inst)
+                    tokens_li.append(sentence.words)
+                    verb_ind_li.append(verb_ind)
+                    srl_tags_li.append(srl_tags)
+                    if len(batch_inst) >= batch_size:
+                        for i, pred in enumerate(self._model.forward_on_instances(batch_inst)):
+                            oie_tags, _ = self._beam_search(
+                                pred['class_probabilities'], pred['mask'], n_best=1)
+                            yield {
+                                'words': tokens_li[i],
+                                'verb': verb_ind_li[i],
+                                'description': None,
+                                'srl_tags': srl_tags_li[i],
+                                'oie_tags': oie_tags[0]
+                            }
+                        batch_inst, tokens_li, verb_ind_li, srl_tags_li = [], [], [], []
 
 
     def predict_batch(self, sents: List[List[str]], batch_size: int = 256, warm_up: int = 0,

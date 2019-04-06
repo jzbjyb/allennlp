@@ -180,8 +180,8 @@ class SemanticRoleLabelerPredictor(Predictor):
                 'words': words,
                 'verb': verb_indicator,
                 'description': description,
-                'tags': tags,
-                'raw_tags': raw_tags
+                'srl_tags': tags,
+                'oie_tags': raw_tags
             }
             result_li.append(result)
         return result_li
