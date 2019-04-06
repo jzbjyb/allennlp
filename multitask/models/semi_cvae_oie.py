@@ -25,11 +25,14 @@ class SemiConditionalVAEOIE(Model):
                  y_feature_dim: int,
                  discriminator: Seq2SeqEncoder, # p(y1|x)
                  encoder: Seq2SeqEncoder, # p(y1|x, y2)
-                 decoder: Seq2SeqEncoder, # p(y2|x, y1) = p(y2|y1)
+                 decoder: Seq2SeqEncoder, # p(y2|x, y1) or p(y2|y1)
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
                  sample_num: int = 1, # number of samples generated from encoder
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
+                 # "all" means using both x and y1 to decode y2,
+                 # "partial" means only using y1 to decode y2
+                 decode_method: str = 'all',
                  beta: float = 1.0, # a coefficient that controls the strength of KL term (similar to beta-VAE)
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -53,6 +56,8 @@ class SemiConditionalVAEOIE(Model):
         self._sample_num = sample_num
         assert infer_algo in {'reinforce', 'gumbel_softmax'}, 'infer_algo not supported'
         self._infer_algo = infer_algo
+        assert decode_method in {'all', 'partial'}, 'decode_method not supported'
+        self._decode_method = decode_method
         assert beta >= 0, 'alpha should be non-negative'
         self._beta = beta
         self._label_smoothing = label_smoothing
@@ -81,11 +86,17 @@ class SemiConditionalVAEOIE(Model):
                                'encoder input dim')
         self.enc_y1_proj = TimeDistributed(Linear(encoder.get_output_dim(), self._y1_num_class))
 
-        # decoder p(y2|y1)
+        # decoder p(y2|x, y1) or p(y2|y1)
         self.y1_embedding = Embedding(self._y1_num_class, y_feature_dim)
         self.decoder = decoder
-        check_dimensions_match(y_feature_dim, decoder.get_input_dim(),
-                               'y1 emb dim', 'decoder input dim')
+        if self._decode_method == 'all':
+            check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim + y_feature_dim,
+                                   decoder.get_input_dim(),
+                                   'text emb dim + verb indicator emb dim + y1 emb dim',
+                                   'decoder input dim')
+        elif self._decode_method == 'partial':
+            check_dimensions_match(y_feature_dim, decoder.get_input_dim(),
+                                   'y1 emb dim', 'decoder input dim')
         self.dec_y2_proj = TimeDistributed(Linear(decoder.get_output_dim(), self._y2_num_class))
 
         # metrics
@@ -99,6 +110,7 @@ class SemiConditionalVAEOIE(Model):
     def vae_encode(self, x_emb: torch.Tensor, y2: torch.LongTensor, mask: torch.LongTensor):
         ''' x,y2 -> y1 '''
         y2_emb = self.y2_embedding(y2)
+        # concat_emb must be concatenated by the order of word, verb, y2
         concat_emb = torch.cat([x_emb, y2_emb], -1)
         enc = self.encoder(concat_emb, mask)
         logits = self.enc_y1_proj(enc)
@@ -120,10 +132,18 @@ class SemiConditionalVAEOIE(Model):
             raise NotImplementedError
 
 
-    def vae_decode(self, y1: torch.LongTensor, y2: torch.LongTensor, mask: torch.LongTensor):
-        ''' y1 -> y2 '''
+    def vae_decode(self, x_emb: torch.Tensor,
+                   y1: torch.LongTensor,
+                   y2: torch.LongTensor,
+                   mask: torch.LongTensor):
+        ''' y1 -> y2 or x, y1 -> y2 '''
         y1_emb = self.y1_embedding(y1)
-        enc = self.decoder(y1_emb, mask)
+        if self._decode_method == 'all':
+            # concat_emb must be concatenated by the order of word, verb, y1
+            concat_emb = torch.cat([x_emb, y1_emb], -1)
+            enc = self.decoder(concat_emb, mask)
+        elif self._decode_method == 'partial':
+            enc = self.decoder(y1_emb, mask)
         logits = self.dec_y2_proj(enc)
         y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average=None)
         return y2_nll
@@ -194,10 +214,12 @@ class SemiConditionalVAEOIE(Model):
             unsup_weight = weight.masked_select(unsup_tm)
 
             # sample
+            # need to replace the old "upsup_x" and "unsup_y2" because there
+            # could be multiple random samples for each data point
             unsup_x, unsup_y2, unsup_y1, enc_y1_nll = self.vae_encode(upsup_x, unsup_y2, unsup_mask)
 
             # decoder loss (reconstruction loss)
-            y2_nll = self.vae_decode(unsup_y1, unsup_y2, unsup_mask)
+            y2_nll = self.vae_decode(unsup_x, unsup_y1, unsup_y2, unsup_mask)
 
             # discriminator loss
             _, _, dis_y1_nll = self.vae_discriminate(unsup_x, unsup_mask, unsup_y1)  # prior
@@ -212,7 +234,6 @@ class SemiConditionalVAEOIE(Model):
                 # TODO: clip reward?
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
                 y1_nll_with_reward = enc_y1_nll * (encoder_reward.detach() - 1) # be mindful of the 1
-                print(y1_nll_with_reward.mean())
 
             # overall loss
             if self._infer_algo == 'reinforce':
