@@ -54,6 +54,7 @@ class SemanticRoleLabeler(Model):
                  encoder: Seq2SeqEncoder,
                  binary_feature_dim: int,
                  embedding_dropout: float = 0.0,
+                 only_train_proj: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -73,6 +74,7 @@ class SemanticRoleLabeler(Model):
         self.tag_projection_layer = TimeDistributed(Linear(self.encoder.get_output_dim(),
                                                            self.num_classes))
         self.embedding_dropout = Dropout(p=embedding_dropout)
+        self._only_train_proj = only_train_proj
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
 
@@ -133,6 +135,9 @@ class SemanticRoleLabeler(Model):
         batch_size, sequence_length, _ = embedded_text_with_verb_indicator.size()
 
         encoded_text = self.encoder(embedded_text_with_verb_indicator, mask)
+
+        if self._only_train_proj: # only train the projection layer
+            encoded_text = encoded_text.detach()
 
         logits = self.tag_projection_layer(encoded_text)
         reshaped_log_probs = logits.view(-1, self.num_classes)
