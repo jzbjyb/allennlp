@@ -4,7 +4,7 @@
     "default_task": "gt",
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
-    "task_weight": {"gt": 1.0, "srl": 1.0},
+    "task_weight": {"gt": 1.6, "srl": 0.4},
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
@@ -26,13 +26,13 @@
     },
     "initializer": [
       [
-        "gt_tag_projection_layer.*weight", // openie tag proj layer
+        "gt_tag_projection_layer.*weight",
         {
           "type": "orthogonal"
         }
       ],
       [
-        "srl_tag_projection_layer.*", // srl tag proj layer
+        "srl_tag_projection_layer.*",
         {
           "type": "pretrained",
           "weights_file_path": "pretrain/srl-model-2018.05.25/weights.th",
@@ -43,31 +43,10 @@
         }
       ],
       [
-        "^(encoder.*|binary_feature_embedding.*|text_field_embedder.*)$", // shared encoder
+        "^((?!(tag_projection_layer|task_encoder)).)*$",
         {
           "type": "pretrained",
           "weights_file_path": "pretrain/srl-model-2018.05.25/weights.th"
-        }
-      ],
-      [
-        "^(gt_task_encoder.*|srl_task_encoder.*)$", // task encoder
-        {
-          "type": "pretrained",
-          "weights_file_path": "pretrain/srl-model-2018.05.25/weights.th",
-          "parameter_name_overrides": {
-            "gt_task_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_6.input_linearity.weight",
-            "gt_task_encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_6.state_linearity.weight",
-            "gt_task_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_6.state_linearity.bias",
-            "gt_task_encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_7.input_linearity.weight",
-            "gt_task_encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_7.state_linearity.weight",
-            "gt_task_encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_7.state_linearity.bias",
-            "srl_task_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_6.input_linearity.weight",
-            "srl_task_encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_6.state_linearity.weight",
-            "srl_task_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_6.state_linearity.bias",
-            "srl_task_encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_7.input_linearity.weight",
-            "srl_task_encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_7.state_linearity.weight",
-            "srl_task_encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_7.state_linearity.bias"
-          }
         }
       ]
     ],
@@ -75,33 +54,11 @@
       "type": "alternating_lstm",
       "input_size": 1124,
       "hidden_size": 300,
-      "num_layers": 6,
+      "num_layers": 8,
       "recurrent_dropout_probability": 0.1,
       "use_input_projection_bias": false
     },
-    "task_encoder": {
-      "gt": {
-        "type": "alternating_lstm",
-        "input_size": 300,
-        "hidden_size": 300,
-        "num_layers": 2,
-        "recurrent_dropout_probability": 0.1,
-        "use_input_projection_bias": false
-      },
-      "srl": {
-        "type": "alternating_lstm",
-        "input_size": 300,
-        "hidden_size": 300,
-        "num_layers": 2,
-        "recurrent_dropout_probability": 0.1,
-        "use_input_projection_bias": false
-      }
-    },
     "encoder_requires_grad": true,
-    "task_encoder_requires_grad": {
-      "gt": true,
-      "srl": true
-    },
     "binary_feature_dim": 100,
     "regularizer": [[".*scalar_parameters.*", {"type": "l2", "alpha": 0.001}]]
   },
@@ -114,6 +71,8 @@
   },
   "validation_iterator": {
     "type": "bucket",
+    //"max_instances_in_memory": 800, // only shuffle consecutive 800 samples
+    //"instances_per_epoch": 4000, // we only have 2k oie validation samples
     "sorting_keys": [["tokens", "num_tokens"]],
     "batch_size" : 80
   },

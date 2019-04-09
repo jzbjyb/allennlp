@@ -221,8 +221,10 @@ class SemanticRoleLabelerMultiTask(Model):
                 else:
                     getattr(self, '{}_accuracy'.format(task_name))(t_logits, t_tags, t_mask)
 
-        # merge from different tasks
-        output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
+        if tags is not None:
+            # merge from different tasks
+            output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)  # average over seqs
+
         if metadata is not None:
             words, verbs = zip(*[(x['words'], x['verb']) for x in metadata])
             output_dict['words'] = list(words)

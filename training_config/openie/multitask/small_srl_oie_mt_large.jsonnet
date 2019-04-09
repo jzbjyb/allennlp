@@ -11,7 +11,7 @@
     "lazy": true
   },
   "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.gold_conll",
-  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.gold_conll:data/openie/conll_for_allennlp/dev_srl_oie_mt/srl/ontonotes.gold_conll",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.gold_conll",
   "model": {
     "type": "srl_mt",
     "text_field_embedder": {
@@ -63,15 +63,13 @@
   },
   "iterator": {
     "type": "bucket",
-    "max_instances_in_memory": 800, // only shuffle consecutive 800 samples
-    "instances_per_epoch": 6000, // we only have 3k oie training samples
+    "max_instances_in_memory": 6080, // only shuffle consecutive 6080 samples
+    "instances_per_epoch": 6080, // we only have 3040 oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
     "batch_size" : 80
   },
   "validation_iterator": {
     "type": "bucket",
-    "max_instances_in_memory": 800, // only shuffle consecutive 800 samples
-    "instances_per_epoch": 4000, // we only have 2k oie validation samples
     "sorting_keys": [["tokens", "num_tokens"]],
     "batch_size" : 80
   },
@@ -86,5 +84,8 @@
       "type": "adadelta",
       "rho": 0.95
     }
+  },
+  "vocabulary": {
+    "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
   }
 }

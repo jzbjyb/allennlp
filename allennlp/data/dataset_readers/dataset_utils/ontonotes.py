@@ -224,6 +224,24 @@ class Ontonotes:
                 # have the '#end document' format for the end of the file.
                 yield document
 
+    def sentence_iterator_direct(self, file_path: str) -> Iterator[OntonotesSentence]:
+        with codecs.open(file_path, 'r', encoding='utf8') as open_file:
+            conll_rows = []
+            for line in open_file:
+                line = line.strip()
+                if line != '' and not line.startswith('#'):
+                    # Non-empty line. Collect the annotation.
+                    conll_rows.append(line)
+                else:
+                    if conll_rows:
+                        yield self._conll_rows_to_sentence(conll_rows)
+                        conll_rows = []
+            if conll_rows:
+                # Collect any stragglers or files which might not
+                # have the '#end document' format for the end of the file.
+                yield self._conll_rows_to_sentence(conll_rows)
+                conll_rows = []
+
     def sentence_iterator(self, file_path: str) -> Iterator[OntonotesSentence]:
         """
         An iterator over the sentences in an individual CONLL formatted file.

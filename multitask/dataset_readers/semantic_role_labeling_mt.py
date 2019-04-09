@@ -146,7 +146,7 @@ class SrlReaderMultiTask(DatasetReader):
         # if `file_path` is a URL, redirect to the cache
         #file_path = cached_path(file_path)
         ontonotes_reader = Ontonotes()
-        for sentence in ontonotes_reader.sentence_iterator(file_path):
+        for sentence in ontonotes_reader.sentence_iterator_direct(file_path):
             tokens = [Token(t) for t in sentence.words]
             if sentence.srl_frames:
                 # skip sentence with no predicates because we don't know which task it should be
