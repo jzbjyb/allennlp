@@ -381,7 +381,8 @@ class SemanticRoleLabelerMultiTask(Model):
         all_probs = []
         transition_matrix = self.get_viterbi_pairwise_potentials()
         for predictions, length in zip(predictions_list, sequence_lengths):
-            max_likelihood_sequence, score = viterbi_decode(predictions[:length], transition_matrix)
+            lp = torch.log(predictions[:length])  # log prob is required by viterbi decoding
+            max_likelihood_sequence, score = viterbi_decode(lp, transition_matrix)
             probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
                      for i in range(len(max_likelihood_sequence))]
             all_probs.append(probs)

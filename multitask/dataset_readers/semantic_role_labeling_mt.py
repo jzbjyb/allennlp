@@ -97,17 +97,19 @@ class SrlReaderMultiTask(DatasetReader):
             # iterate through multiple files accroding to the ratio of `multiple_files_sample_rate`
             if self._multiple_files_sample_rate is None:
                 # use uniform sampling as default
-                self._multiple_files_sample_rate = [1] * len(file_path_li)
-            assert len(self._multiple_files_sample_rate) == len(file_path_li), \
+                multiple_files_sample_rate = [1] * len(file_path_li)
+            else:
+                multiple_files_sample_rate = self._multiple_files_sample_rate
+            assert len(multiple_files_sample_rate) == len(file_path_li), \
                 'number of items in multiple_files_sample_rate should be the same as the number of files'
-            for sr in self._multiple_files_sample_rate:
+            for sr in multiple_files_sample_rate:
                 assert type(sr) is int, 'multiple_files_sample_rate must be a list of int'
             readers = [self._read_one_file(file_path) for file_path in file_path_li]
             stop_set = set()
             restart = 0
             while True:
                 buf: List[Instance] = []
-                for i, (reader, sr) in enumerate(zip(readers, self._multiple_files_sample_rate)):
+                for i, (reader, sr) in enumerate(zip(readers, multiple_files_sample_rate)):
                     for j in range(sr): # yield up `sr` samples from the current file
                         try:
                             buf.append(reader.__next__())
