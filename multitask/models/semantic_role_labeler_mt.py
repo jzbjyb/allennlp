@@ -207,7 +207,7 @@ class SemanticRoleLabelerMultiTask(Model):
                 # calculate loss
                 if self.use_crf:
                     ll = self.crf(t_logits, t_tags, t_mask, agg=None)
-                    ll /= mask.sum(1).float() + 1e-13 # average over words in each seq
+                    ll /= t_mask.sum(1).float() + 1e-13 # average over words in each seq
                 else:
                     ll = -sequence_cross_entropy_with_logits(
                         t_logits, t_tags, t_mask, average=None, label_smoothing=self._label_smoothing)
@@ -224,6 +224,7 @@ class SemanticRoleLabelerMultiTask(Model):
         if tags is not None:
             # merge from different tasks
             output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)  # average over seqs
+            #output_dict['loss'] = all_loss / (weight.sum() + 1e-13) # TODO: use weight directly?
 
         if metadata is not None:
             words, verbs = zip(*[(x['words'], x['verb']) for x in metadata])

@@ -37,7 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--direction', type=str, help='direction of the convertion',
                         choices=['oie2srl', 'srl2oie'], required=True)
     parser.add_argument('--model', type=str, help='model file', required=True)
-    parser.add_argument('--inp', type=str, help='input conll file or directory.', required=True)
+    parser.add_argument('--inp', type=str, help='input conll file.', required=True)
     parser.add_argument('--out', type=str, help='output file.', required=True)
     parser.add_argument('--format', type=str, help='format of the output file',
                         default='tagging', choices=['tagging', 'conll'])
@@ -53,7 +53,7 @@ if __name__ == '__main__':
         predictor = Predictor.from_archive(arc, predictor_name='semantic-role-labeling')
     elif args.direction == 'srl2oie':
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
-    results = predictor.predict_conll_file(args.inp, batch_size=128) # result generator
+    results = predictor.predict_conll_file(args.inp, batch_size=128, is_dir=False) # result generator
 
     # save to file
     if type(results) is list:

@@ -255,33 +255,40 @@ class OpenIePredictor(Predictor):
         return all_tags, all_probs
 
 
-    def predict_conll_file(self, file_dir: str, batch_size: int = 256):
+    def predict_conll_file(self, filepath: str, batch_size: int = 256, is_dir: bool = True):
         ontonotes_reader = Ontonotes()
         batch_inst, tokens_li, verb_ind_li, srl_tags_li = [], [], [], []
-        for conll_file in ontonotes_reader.dataset_path_iterator(file_dir):
-            for sentence in ontonotes_reader.sentence_iterator(conll_file):
-                tokens = [Token(t) for t in sentence.words]
-                if not sentence.srl_frames:
-                    continue
-                for (_, srl_tags) in sentence.srl_frames:
-                    verb_ind = [1 if label[-2:] == '-V' else 0 for label in srl_tags]
-                    inst = self._dataset_reader.text_to_instance(tokens, verb_ind)
-                    batch_inst.append(inst)
-                    tokens_li.append(sentence.words)
-                    verb_ind_li.append(verb_ind)
-                    srl_tags_li.append(srl_tags)
-                    if len(batch_inst) >= batch_size:
-                        for i, pred in enumerate(self._model.forward_on_instances(batch_inst)):
-                            oie_tags, _ = self._beam_search(
-                                pred['class_probabilities'], pred['mask'], n_best=1)
-                            yield {
-                                'words': tokens_li[i],
-                                'verb': verb_ind_li[i],
-                                'description': None,
-                                'srl_tags': srl_tags_li[i],
-                                'oie_tags': oie_tags[0]
-                            }
-                        batch_inst, tokens_li, verb_ind_li, srl_tags_li = [], [], [], []
+        def dir_iter(filepath):
+            if is_dir:
+                for conll_file in ontonotes_reader.dataset_path_iterator(filepath):
+                    for sentence in ontonotes_reader.sentence_iterator(conll_file):
+                        yield sentence
+            else:
+                for sentence in ontonotes_reader.sentence_iterator_direct(filepath):
+                    yield sentence
+        for sentence in dir_iter(filepath):
+            tokens = [Token(t) for t in sentence.words]
+            if not sentence.srl_frames:
+                continue
+            for (_, srl_tags) in sentence.srl_frames:
+                verb_ind = [1 if label[-2:] == '-V' else 0 for label in srl_tags]
+                inst = self._dataset_reader.text_to_instance(tokens, verb_ind)
+                batch_inst.append(inst)
+                tokens_li.append(sentence.words)
+                verb_ind_li.append(verb_ind)
+                srl_tags_li.append(srl_tags)
+                if len(batch_inst) >= batch_size:
+                    for i, pred in enumerate(self._model.forward_on_instances(batch_inst)):
+                        oie_tags, _ = self._beam_search(
+                            pred['class_probabilities'], pred['mask'], n_best=1)
+                        yield {
+                            'words': tokens_li[i],
+                            'verb': verb_ind_li[i],
+                            'description': None,
+                            'srl_tags': srl_tags_li[i],
+                            'oie_tags': oie_tags[0]
+                        }
+                    batch_inst, tokens_li, verb_ind_li, srl_tags_li = [], [], [], []
 
 
     def predict_batch(self, sents: List[List[str]], batch_size: int = 256, warm_up: int = 0,
