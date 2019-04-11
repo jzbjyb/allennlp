@@ -7,8 +7,8 @@
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_parallel_on_srl/oie2016.train.all_tagging",
-  "validation_data_path": "data/openie/conll_for_allennlp/dev_parallel_on_srl/oie2016.dev.all_tagging",
+  "train_data_path": "data/openie/conll_for_allennlp/train_parallel_on_srl2/oie2016.train.all_tagging",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_parallel_on_srl2/oie2016.dev.all_tagging",
   "model": {
     "type": "srl_oie_retag",
     "mode": "xoie_srl",
@@ -68,6 +68,6 @@
     }
   },
   "vocabulary": { // use the multitask vocab
-    "directory_path": "output/openie/multitask/small_srl_oie_mt/vocabulary/"
+    "directory_path": "output/openie/multitask_vocab/small_srl_oie_mt_large_task_encoder/vocabulary/"
   }
 }

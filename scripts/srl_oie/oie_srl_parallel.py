@@ -1,5 +1,5 @@
 import sys, os
-root_dir = os.path.abspath(os.path.join(__file__, '../..'))
+root_dir = os.path.abspath(os.path.join(__file__, '../../..'))
 sys.path.insert(0, root_dir)
 import argparse
 from allennlp.predictors.predictor import Predictor
@@ -42,6 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--format', type=str, help='format of the output file',
                         default='tagging', choices=['tagging', 'conll'])
     parser.add_argument('--cuda_device', type=int, default=0, help='id of GPU to use (if any)')
+    parser.add_argument('--is_dir', action='store_true', help='whether the inp is dir')
     args = parser.parse_args()
 
     import_submodules('multitask')
@@ -53,7 +54,7 @@ if __name__ == '__main__':
         predictor = Predictor.from_archive(arc, predictor_name='semantic-role-labeling')
     elif args.direction == 'srl2oie':
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
-    results = predictor.predict_conll_file(args.inp, batch_size=128, is_dir=False) # result generator
+    results = predictor.predict_conll_file(args.inp, batch_size=128, is_dir=args.is_dir) # result generator
 
     # save to file
     if type(results) is list:
