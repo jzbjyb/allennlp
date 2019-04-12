@@ -167,6 +167,8 @@ class SemanticRoleLabelerMultiTask(Model):
             # SHAPE: (task_batch_size,)
             t_weight = weight.masked_select(task_mask)
             t_bs, t_sl, = t_mask.size()
+            if t_weight.ne(0).sum().item() == 0:  # all weights are zero
+                continue
 
             # get metadata of the current task
             num_classes = getattr(self, '{}_num_classes'.format(task_name))
