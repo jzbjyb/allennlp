@@ -211,8 +211,9 @@ class SemanticRoleLabelerMultiTask(Model):
                 else:
                     ll = -sequence_cross_entropy_with_logits(
                         t_logits, t_tags, t_mask, average=None, label_smoothing=self._label_smoothing)
-                t_loss = -(ll * t_weight).sum() / ((t_mask.sum(1) > 0).float().sum() + 1e-13) # average over seqs
-                all_loss += -(ll * t_weight).sum()
+                t_loss = -(ll * t_weight).sum()
+                #all_loss += t_loss
+                all_loss += t_loss / ((t_mask.sum(1) > 0).float().sum() + 1e-13) # task average
                 # calculate metrics
                 if not self.ignore_span_metric:
                     getattr(self, '{}_span_metric'.format(task_name))(t_cp, t_tags, t_mask)
@@ -222,10 +223,13 @@ class SemanticRoleLabelerMultiTask(Model):
                     getattr(self, '{}_accuracy'.format(task_name))(t_logits, t_tags, t_mask)
 
         if tags is not None:
-            # merge from different tasks
-            output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)  # average over seqs
-            #output_dict['loss'] = all_loss / (weight.sum() + 1e-13) # TODO: use weight directly?
-
+            # TODO: which version to use?
+            # overall average by the number of samples
+            #output_dict['loss'] = all_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
+            # overall average by sample weights
+            #output_dict['loss'] = all_loss / (weight.sum() + 1e-13)
+            # use the loss as is, which is already average for each task
+            output_dict['loss'] = all_loss
         if metadata is not None:
             words, verbs = zip(*[(x['words'], x['verb']) for x in metadata])
             output_dict['words'] = list(words)
