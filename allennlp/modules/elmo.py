@@ -94,7 +94,8 @@ class Elmo(torch.nn.Module):
                  vocab_to_cache: List[str] = None,
                  keep_sentence_boundaries: bool = False,
                  scalar_mix_parameters: List[float] = None,
-                 module: torch.nn.Module = None) -> None:
+                 module: torch.nn.Module = None,
+                 stateful: bool = True) -> None:
         super(Elmo, self).__init__()
 
         logger.info("Initializing ELMo")
@@ -107,7 +108,8 @@ class Elmo(torch.nn.Module):
             self._elmo_lstm = _ElmoBiLm(options_file,
                                         weight_file,
                                         requires_grad=requires_grad,
-                                        vocab_to_cache=vocab_to_cache)
+                                        vocab_to_cache=vocab_to_cache,
+                                        stateful=stateful)
         self._has_cached_vocab = vocab_to_cache is not None
         self._keep_sentence_boundaries = keep_sentence_boundaries
         self._dropout = Dropout(p=dropout)
@@ -518,7 +520,8 @@ class _ElmoBiLm(torch.nn.Module):
                  options_file: str,
                  weight_file: str,
                  requires_grad: bool = False,
-                 vocab_to_cache: List[str] = None) -> None:
+                 vocab_to_cache: List[str] = None,
+                 stateful: bool = True) -> None:
         super(_ElmoBiLm, self).__init__()
 
         self._token_embedder = _ElmoCharacterEncoder(options_file, weight_file, requires_grad=requires_grad)
@@ -550,7 +553,8 @@ class _ElmoBiLm(torch.nn.Module):
                                    num_layers=options['lstm']['n_layers'],
                                    memory_cell_clip_value=options['lstm']['cell_clip'],
                                    state_projection_clip_value=options['lstm']['proj_clip'],
-                                   requires_grad=requires_grad)
+                                   requires_grad=requires_grad,
+                                   stateful=stateful)
         self._elmo_lstm.load_weights(weight_file)
         # Number of representation layers including context independent layer
         self.num_layers = options['lstm']['n_layers'] + 1

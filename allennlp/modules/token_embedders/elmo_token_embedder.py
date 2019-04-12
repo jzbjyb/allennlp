@@ -52,7 +52,8 @@ class ElmoTokenEmbedder(TokenEmbedder):
                  requires_grad: bool = False,
                  projection_dim: int = None,
                  vocab_to_cache: List[str] = None,
-                 scalar_mix_parameters: List[float] = None) -> None:
+                 scalar_mix_parameters: List[float] = None,
+                 stateful: bool = True) -> None:
         super(ElmoTokenEmbedder, self).__init__()
 
         self._elmo = Elmo(options_file,
@@ -62,7 +63,8 @@ class ElmoTokenEmbedder(TokenEmbedder):
                           dropout=dropout,
                           requires_grad=requires_grad,
                           vocab_to_cache=vocab_to_cache,
-                          scalar_mix_parameters=scalar_mix_parameters)
+                          scalar_mix_parameters=scalar_mix_parameters,
+                          stateful=stateful)
         if projection_dim:
             self._projection = torch.nn.Linear(self._elmo.get_output_dim(), projection_dim)
             self.output_dim = projection_dim
@@ -117,6 +119,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
             vocab_to_cache = None
         projection_dim = params.pop_int("projection_dim", None)
         scalar_mix_parameters = params.pop('scalar_mix_parameters', None)
+        stateful = params.pop('stateful', True)
         params.assert_empty(cls.__name__)
         return cls(options_file=options_file,
                    weight_file=weight_file,
@@ -125,4 +128,5 @@ class ElmoTokenEmbedder(TokenEmbedder):
                    requires_grad=requires_grad,
                    projection_dim=projection_dim,
                    vocab_to_cache=vocab_to_cache,
-                   scalar_mix_parameters=scalar_mix_parameters)
+                   scalar_mix_parameters=scalar_mix_parameters,
+                   stateful=stateful)
