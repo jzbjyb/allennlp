@@ -4,6 +4,7 @@
     "default_task": "gt",
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
+    "multiple_files_sample_rate": [1, 3],
     "task_weight": {"gt": 1.0, "srl": 1.0},
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
@@ -107,10 +108,10 @@
   },
   "iterator": {
     "type": "task_bucket",
-    "max_instances_in_memory": 6080, // only shuffle consecutive 6080 samples
-    "instances_per_epoch": 6080, // we only have 3040 oie training samples
+    "max_instances_in_memory": 12160, // only shuffle consecutive 6080 samples
+    "instances_per_epoch": 12160, // we only have 3040 oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
-    "batch_size" : 80
+    "batch_size" : 128
   },
   "validation_iterator": {
     "type": "bucket",
