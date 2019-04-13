@@ -98,7 +98,10 @@ class SrlReaderMultiTask(DatasetReader):
             if self._multiple_files_sample_rate is None:
                 # use uniform sampling as default
                 multiple_files_sample_rate = [1] * len(file_path_li)
-            else:
+            elif len(self._multiple_files_sample_rate) != len(file_path_li):  # len inconsistent, use files
+                # use uniform sampling as default
+                multiple_files_sample_rate = [1] * len(file_path_li)
+            else:  # len consistent
                 multiple_files_sample_rate = self._multiple_files_sample_rate
             assert len(multiple_files_sample_rate) == len(file_path_li), \
                 'number of items in multiple_files_sample_rate should be the same as the number of files'
