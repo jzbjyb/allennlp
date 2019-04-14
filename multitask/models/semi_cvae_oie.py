@@ -172,7 +172,7 @@ class SemiConditionalVAEOIE(Model):
 
         if self._sample_algo == 'random':  # random sample from categorical distribution
             # SHAPE: (beam_size, batch_size, seq_len)
-            y1 = distributions.Categorical(logits=logits).sample(beam_size)
+            y1 = distributions.Categorical(logits=logits).sample([beam_size])
         elif self._sample_algo == 'beam':  # beam search (deterministic)
             # SHAPE: (beam_size, batch_size, seq_len)
             y1 = self.beam_search_sample(logits, mask, beam_size=beam_size)
