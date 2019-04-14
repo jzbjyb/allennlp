@@ -10,8 +10,8 @@
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.gold_conll",
-  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.gold_conll",
+  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
   "model": {
     "type": "semi_cvae_oie",
     "y1_ns": "gt",
@@ -23,10 +23,11 @@
     "text_field_embedder": {
       "elmo": {
         "type": "elmo_token_embedder",
-        "options_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
-        "weight_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
+        "options_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
+        "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
-        "dropout": 0.1
+        "dropout": 0.1,
+        "stateful": false
       }
     },
     "discriminator": {
@@ -60,14 +61,14 @@
         "^(binary_feature_embedding.*|text_field_embedder.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/multitask_vocab/small_srl_oie_mt_large_task_encoder/best.th"
+          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th"
         }
       ],
       [ // use pretrained model from multitask learning to init discriminator
         "^(discriminator.*|disc_y1_proj.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/multitask_vocab/small_srl_oie_mt_large_task_encoder/best.th",
+          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th",
           "parameter_name_overrides": {
             "discriminator._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
             "discriminator._module.layer_0.state_linearity.weight": "encoder._module.layer_0.state_linearity.weight",
@@ -102,7 +103,7 @@
         "^(decoder.*|dec_y2_proj.*|y1_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xoie_srl_on_srl2_/best.th",
+          "weights_file_path": "output/openie/retag/small_xoie_srl_on_srl3/best.th",
           "parameter_name_overrides": {
             "y1_embedding.weight": "tag_feature_embedding.weight",
             "decoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
@@ -120,7 +121,7 @@
         "^(encoder.*|enc_y1_proj.*|y2_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xsrl_oie_on_srl2/best.th",
+          "weights_file_path": "output/openie/retag/small_xsrl_oie_on_srl3/best.th",
           "parameter_name_overrides": {
             "y2_embedding.weight": "tag_feature_embedding.weight",
             "encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
@@ -138,7 +139,7 @@
     "regularizer": [[".*scalar_parameters.*", {"type": "l2", "alpha": 0.001}]]
   },
   "iterator": {
-    "type": "bucket",
+    "type": "task_bucket",
     "max_instances_in_memory": 6080, // only shuffle consecutive 6080 samples
     "instances_per_epoch": 6080, // we only have 3k oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
@@ -162,6 +163,6 @@
     }
   },
   "vocabulary": {
-    "directory_path": "output/openie/multitask_vocab/small_srl_oie_mt_large_task_encoder/vocabulary"
+    "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
   }
 }
