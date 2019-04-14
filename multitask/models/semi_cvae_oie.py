@@ -41,6 +41,18 @@ def gumbel_softmax(logits, temperature):
     return (y_hard - y).detach() + y
 
 
+def gumbel_softmax_multiple(logits,  # SHAPE: (batch_size, seq_len, num_class)
+                            temperature,
+                            num_sample=1):
+    # SHAPE: (num_sample, batch_size, seq_len, num_class)
+    y = torch.stack([gumbel_softmax_sample(logits, temperature) for _ in range(num_sample)])
+    # SHAPE: _, (num_sample, batch_size, seq_len)
+    _, y_ind = y.max(dim=-1)
+    y_hard = torch.zeros_like(y)
+    y_hard.scatter_(-1, y_ind.unsqueeze(-1), 1)
+    return (y_hard - y).detach() + y, y_ind
+
+
 @Model.register('semi_cvae_oie')
 class SemiConditionalVAEOIE(Model):
     def __init__(self, vocab: Vocabulary,
@@ -55,6 +67,7 @@ class SemiConditionalVAEOIE(Model):
                  sample_num: int = 1, # number of samples generated from encoder
                  sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
+                 temperature: float = 1.0,  # temperature in gumbel softmax
                  # "all" means using both x and y1 to decode y2,
                  # "partial" means only using y1 to decode y2
                  decode_method: str = 'all',
@@ -83,6 +96,7 @@ class SemiConditionalVAEOIE(Model):
         self._sample_algo = sample_algo
         assert infer_algo in {'reinforce', 'gumbel_softmax'}, 'infer_algo not supported'
         self._infer_algo = infer_algo
+        self._temperature = temperature
         assert decode_method in {'all', 'partial'}, 'decode_method not supported'
         self._decode_method = decode_method
         assert beta >= 0, 'alpha should be non-negative'
@@ -132,7 +146,10 @@ class SemiConditionalVAEOIE(Model):
         self.y1_span_metric = \
             SpanBasedF1Measure(vocab, tag_namespace=self._y1_label_ns, ignore_classes=['V'])
         self.y1_accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
-        self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l'])
+        if infer_algo == 'reinforce':
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l'])
+        elif infer_algo == 'gumbel_softmax':
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l'])
 
         initializer(self)
 
@@ -171,33 +188,45 @@ class SemiConditionalVAEOIE(Model):
         logits = self.enc_y1_proj(enc)
 
         if self._sample_algo == 'random':  # random sample from categorical distribution
-            # SHAPE: (beam_size, batch_size, seq_len)
-            y1 = distributions.Categorical(logits=logits).sample([beam_size])
+            if self._infer_algo == 'reinforce':
+                # SHAPE: (beam_size, batch_size, seq_len)
+                y1 = distributions.Categorical(logits=logits).sample([beam_size])
+            elif self._infer_algo == 'gumbel_softmax':
+                # SHAPE: (beam_size, batch_size, seq_len, num_class), (beam_size, batch_size, seq_len)
+                y1_oh, y1 = gumbel_softmax_multiple(logits, self._temperature, self._sample_num)
         elif self._sample_algo == 'beam':  # beam search (deterministic)
-            # SHAPE: (beam_size, batch_size, seq_len)
-            y1 = self.beam_search_sample(logits, mask, beam_size=beam_size)
+            if self._infer_algo == 'reinforce':
+                # SHAPE: (beam_size, batch_size, seq_len)
+                y1 = self.beam_search_sample(logits, mask, beam_size=beam_size)
+            elif self._infer_algo == 'gumbel_softmax':
+                # TODO: gumbel softmax for beam search?
+                raise NotImplementedError
 
         # TODO: the sequence_cross_entropy_with_logits an average across tokens
         # SHAPE: (beam_size, batch_size)
+        y1.requires_grad = False
         y1_nll = torch.stack([sequence_cross_entropy_with_logits(
             logits, y1[i], mask, average=None) for i in range(beam_size)])
+
         if self._infer_algo == 'reinforce':
-            # in REINFORCE, no backpropagation will go through y1
-            y1.requires_grad = False
-            return x_emb, y2, y1, y1_nll
+            return x_emb, y2, y1, None, y1_nll
         elif self._infer_algo == 'gumbel_softmax':
-            # TODO: gt softmax
-            raise NotImplementedError
+            return x_emb, y2, y1, y1_oh, y1_nll
 
 
     def vae_decode(self, x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, x_emb_size)
-                   y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                   # SHAPE: (beam_size, batch_size, seq_len) or (beam_size, batch_size, seq_len, num_class)
+                   y1: torch.LongTensor,
                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    mask: torch.LongTensor):
         ''' y1 -> y2 or x, y1 -> y2 '''
-        beam_size, batch_size, seq_len = y1.size()
+        beam_size, batch_size, seq_len = y1.size()[:3]
+        if len(y1.size()) == 3:  # no bp
+            y1_emb = self.y1_embedding(y1)
+        elif len(y1.size()) == 4:  # bp
+            y1_emb = torch.matmul(y1, self.y1_embedding.weight)
         # SHAPE: (beam_size * batch_size, seq_len, y_emb_size)
-        y1_emb = self.y1_embedding(y1).view(beam_size * batch_size, seq_len, -1)
+        y1_emb = y1_emb.view(beam_size * batch_size, seq_len, -1)
         # SHAPE: (beam_size * batch_size, seq_len)
         y2 = y2.repeat(beam_size, 1)
         # SHAPE: (beam_size * batch_size, seq_len, x_emb_size)
@@ -293,13 +322,18 @@ class SemiConditionalVAEOIE(Model):
             unsup_num = (unsup_mask.sum(1) > 0).int().sum().item()
 
             # sample
-            # SHAPE: _, _, (beam_size, batch_size, seq_len), (beam_size, batch_size)
-            _, _, unsup_y1, enc_y1_nll = \
+            # SHAPE: _, _, (beam_size, batch_size, seq_len),
+            # (beam_size, batch_size, seq_len, num_class),
+            # (beam_size, batch_size)
+            _, _, unsup_y1, unsup_y1_oh, enc_y1_nll = \
                 self.vae_encode(unsup_x, unsup_y2, unsup_mask, beam_size=self._sample_num)
 
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
-            y2_nll = self.vae_decode(unsup_x, unsup_y1, unsup_y2, unsup_mask)
+            if self._infer_algo == 'reinforce':
+                y2_nll = self.vae_decode(unsup_x, unsup_y1, unsup_y2, unsup_mask)
+            elif self._infer_algo == 'gumbel_softmax':
+                y2_nll = self.vae_decode(unsup_x, unsup_y1_oh, unsup_y2, unsup_mask)
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)
@@ -330,8 +364,9 @@ class SemiConditionalVAEOIE(Model):
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
-                vae_loss = ((y2_nll + kl).mean(0) * unsup_weight).sum()
-                sup_unsup_loss += vae_loss
+                elbo_loss = ((y2_nll + kl).mean(0) * unsup_weight).sum()
+                sup_unsup_loss += elbo_loss
+                self.y1_multi_loss('elbo_l', elbo_loss.item(), count=unsup_num)
 
         if tags is not None:
             #output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)

@@ -17,8 +17,9 @@
     "y1_ns": "gt",
     "y2_ns": "srl",
     "sample_num": 5,
-    "sample_algo": "beam",
-    "infer_algo": "reinforce",
+    "sample_algo": "random",
+    "infer_algo": "gumbel_softmax",
+    "temperature": 1.0,
     "decode_method": "all",
     "beta": 1.0,
     "text_field_embedder": {
