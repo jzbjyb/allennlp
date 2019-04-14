@@ -14,7 +14,7 @@ from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
-from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
+from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode, n_best_viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
@@ -53,6 +53,7 @@ class SemiConditionalVAEOIE(Model):
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
                  sample_num: int = 1, # number of samples generated from encoder
+                 sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
                  # "all" means using both x and y1 to decode y2,
                  # "partial" means only using y1 to decode y2
@@ -78,6 +79,8 @@ class SemiConditionalVAEOIE(Model):
         self._y2_num_class = self.vocab.get_vocab_size(self._y2_label_ns)
         assert sample_num > 0, 'sample_num should be a positive integer'
         self._sample_num = sample_num
+        assert sample_algo in {'beam', 'random'}, 'sample_algo not supported'
+        self._sample_algo = sample_algo
         assert infer_algo in {'reinforce', 'gumbel_softmax'}, 'infer_algo not supported'
         self._infer_algo = infer_algo
         assert decode_method in {'all', 'partial'}, 'decode_method not supported'
@@ -87,6 +90,8 @@ class SemiConditionalVAEOIE(Model):
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
         self.use_crf = use_crf  # TODO: add crf
+        # use for sampling process at training time
+        self.register_buffer('_pairwise_potential', self.get_viterbi_pairwise_potentials())
 
         # dropout
         self.embedding_dropout = Dropout(p=embedding_dropout)
@@ -132,22 +137,50 @@ class SemiConditionalVAEOIE(Model):
         initializer(self)
 
 
-    def vae_encode(self, x_emb: torch.Tensor, y2: torch.LongTensor, mask: torch.LongTensor):
+    def beam_search_sample(self,
+                           logits: torch.Tensor,  # SHAPE: (batch_size, max_seq_len, num_class)
+                           mask: torch.LongTensor,  # SHAPE: (batch_size, max_seq_len)
+                           beam_size: int = 5) -> torch.Tensor:
+        batch_size, max_seq_len, _ = logits.size()
+        lp = F.log_softmax(logits, dim=-1)  # log prob
+        samples = []
+        for i in range(batch_size):
+            seq_len = mask[i].sum().item() # length of this sample
+            # SHAPE: (beam_size, seq_len)
+            paths, _ = n_best_viterbi_decode(
+                lp[i][:seq_len], self._pairwise_potential, n_best=beam_size)
+            if paths.size(0) != beam_size:
+                raise Exception('the number of samples is not equal to beam size')
+            # SHPAE: (beam_size, max_seq_len)
+            paths = F.pad(paths, [0, max_seq_len - seq_len], 'constant', 0)
+            samples.append(paths)
+        # SHAPE: (beam_size, batch_size, max_seq_len)
+        return torch.stack(samples, 1)
+
+
+    def vae_encode(self,
+                   x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, emb_size)
+                   y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                   mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                   beam_size: int = 1):
         ''' x,y2 -> y1 '''
         y2_emb = self.y2_embedding(y2)
         # concat_emb must be concatenated by the order of word, verb, y2
         concat_emb = torch.cat([x_emb, y2_emb], -1)
         enc = self.encoder(concat_emb, mask)
         logits = self.enc_y1_proj(enc)
-        if self._sample_num == 1:
-            # SHAPE: (batch_size, seq_len)
-            y1 = distributions.Categorical(logits=logits).sample()
-            # SHAPE: (batch_size,)
-            # TODO: the sequence_cross_entropy_with_logits an average across tokens
-            y1_nll = sequence_cross_entropy_with_logits(logits, y1, mask, average=None)
-        else:
-            # TODO: beam search
-            raise NotImplementedError
+
+        if self._sample_algo == 'random':  # random sample from categorical distribution
+            # SHAPE: (beam_size, batch_size, seq_len)
+            y1 = distributions.Categorical(logits=logits).sample(beam_size)
+        elif self._sample_algo == 'beam':  # beam search (deterministic)
+            # SHAPE: (beam_size, batch_size, seq_len)
+            y1 = self.beam_search_sample(logits, mask, beam_size=beam_size)
+
+        # TODO: the sequence_cross_entropy_with_logits an average across tokens
+        # SHAPE: (beam_size, batch_size)
+        y1_nll = torch.stack([sequence_cross_entropy_with_logits(
+            logits, y1[i], mask, average=None) for i in range(beam_size)])
         if self._infer_algo == 'reinforce':
             # in REINFORCE, no backpropagation will go through y1
             y1.requires_grad = False
@@ -157,12 +190,20 @@ class SemiConditionalVAEOIE(Model):
             raise NotImplementedError
 
 
-    def vae_decode(self, x_emb: torch.Tensor,
-                   y1: torch.LongTensor,
-                   y2: torch.LongTensor,
+    def vae_decode(self, x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, x_emb_size)
+                   y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                   y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    mask: torch.LongTensor):
         ''' y1 -> y2 or x, y1 -> y2 '''
-        y1_emb = self.y1_embedding(y1)
+        beam_size, batch_size, seq_len = y1.size()
+        # SHAPE: (beam_size * batch_size, seq_len, y_emb_size)
+        y1_emb = self.y1_embedding(y1).view(beam_size * batch_size, seq_len, -1)
+        # SHAPE: (beam_size * batch_size, seq_len)
+        y2 = y2.repeat(beam_size, 1)
+        # SHAPE: (beam_size * batch_size, seq_len, x_emb_size)
+        x_emb = x_emb.repeat(beam_size, 1, 1)
+        # SHAPE: (beam_size * batch_size, seq_len)
+        mask = mask.repeat(beam_size, 1)
         if self._decode_method == 'all':
             # concat_emb must be concatenated by the order of word, verb, y1
             concat_emb = torch.cat([x_emb, y1_emb], -1)
@@ -171,24 +212,33 @@ class SemiConditionalVAEOIE(Model):
             enc = self.decoder(y1_emb, mask)
         logits = self.dec_y2_proj(enc)
         y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average=None)
+        # SHAPE: (beam_size, batch_size)
+        y2_nll = y2_nll.view(beam_size, batch_size)
         return y2_nll
 
 
-    def vae_discriminate(self, x_emb: torch.Tensor, mask: torch.LongTensor, y1: torch.LongTensor = None):
+    def vae_discriminate(self,
+                         x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, emb_size)
+                         mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                         y1: torch.LongTensor = None):  # SHAPE: (beam_size, batch_size, seq_len)
         ''' x -> y1 '''
-        _, sl = mask.size()
-
-        # discriminator
         enc = self.discriminator(x_emb, mask)
         logits = self.disc_y1_proj(enc)
-        cp = F.softmax(logits.view(-1, self._y1_num_class), dim=-1).view([-1, sl, self._y1_num_class])
+        cp = F.softmax(logits, dim=-1)
 
-        if y1 is not None:
-            # loss
-            y1_nll = sequence_cross_entropy_with_logits(
-                logits, y1, mask, average=None, label_smoothing=self._label_smoothing)
+        if y1 is not None: # loss
+            if len(y1.size()) == 2:
+                y1_nll = sequence_cross_entropy_with_logits(
+                    logits, y1, mask, average=None, label_smoothing=self._label_smoothing)
+            elif len(y1.size()) == 3:
+                beam_size, batch_size, seq_len = y1.size()
+                # SHAPE: (beam_size, batch_size)
+                y1_nll = torch.stack([sequence_cross_entropy_with_logits(
+                    logits, y1[i], mask, average=None, label_smoothing=self._label_smoothing)
+                    for i in range(beam_size)])
+            else:
+                raise Exception('y1 dimension not correct')
             return logits, cp, y1_nll
-
         return logits, cp, None
 
 
@@ -236,24 +286,27 @@ class SemiConditionalVAEOIE(Model):
         # unsupervised
         unsup_tm = task_labels.eq(self._y2_ind)
         if unsup_tm.sum().item() > 0 and tags is not None: # skip if no unsupervised data exists
-            upsup_x = concat_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, es)
+            unsup_x = concat_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, es)
             unsup_y2 = tags.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_mask = mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_weight = weight.masked_select(unsup_tm)
             unsup_num = (unsup_mask.sum(1) > 0).int().sum().item()
 
             # sample
-            # need to replace the old "upsup_x" and "unsup_y2" because there
-            # could be multiple random samples for each data point
-            unsup_x, unsup_y2, unsup_y1, enc_y1_nll = self.vae_encode(upsup_x, unsup_y2, unsup_mask)
+            # SHAPE: _, _, (beam_size, batch_size, seq_len), (beam_size, batch_size)
+            _, _, unsup_y1, enc_y1_nll = \
+                self.vae_encode(unsup_x, unsup_y2, unsup_mask, beam_size=self._sample_num)
 
             # decoder loss (reconstruction loss)
+            # SHAPE: (beam_size, batch_size)
             y2_nll = self.vae_decode(unsup_x, unsup_y1, unsup_y2, unsup_mask)
 
             # discriminator loss
+            # SHAPE: (beam_size, batch_size)
             _, _, dis_y1_nll = self.vae_discriminate(unsup_x, unsup_mask, unsup_y1)  # prior
 
             # kl divergence
+            # SHAPE: (beam_size, batch_size)
             kl = self._beta * (dis_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
 
             # encoder loss
@@ -261,21 +314,24 @@ class SemiConditionalVAEOIE(Model):
             # while gumbel_softmax could directly do bp
             if self._infer_algo == 'reinforce':
                 # TODO: clip reward?
+                # SHAPE: (beam_size, batch_size)
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
-                y1_nll_with_reward = enc_y1_nll * (encoder_reward.detach() - self._beta) # be mindful of the beta
+                encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
+                encoder_reward = encoder_reward - encoder_reward.mean()  # reduce variance
+                y1_nll_with_reward = enc_y1_nll * encoder_reward
 
             # overall loss
             if self._infer_algo == 'reinforce':
-                encoder_loss = (y1_nll_with_reward * unsup_weight).sum()
-                decoder_loss = (y2_nll * unsup_weight).sum()
-                discriminator_loss = (self._beta * dis_y1_nll * unsup_weight).sum() # be mindful of the beta
+                encoder_loss = (y1_nll_with_reward.mean(0) * unsup_weight).sum()
+                decoder_loss = (y2_nll.mean(0) * unsup_weight).sum()
+                discriminator_loss = (self._beta * dis_y1_nll.mean(0) * unsup_weight).sum() # be mindful of the beta
                 sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss
                 self.y1_multi_loss('enc_l', encoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
-                vae_loss = y2_nll + kl
-                sup_unsup_loss += (vae_loss * unsup_weight).sum()
+                vae_loss = ((y2_nll + kl).mean(0) * unsup_weight).sum()
+                sup_unsup_loss += vae_loss
 
         if tags is not None:
             #output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
