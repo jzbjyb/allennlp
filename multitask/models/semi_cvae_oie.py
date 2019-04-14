@@ -5,6 +5,7 @@ import torch
 from torch.nn.modules import Linear, Dropout
 import torch.nn.functional as F
 import torch.distributions as distributions
+from torch.autograd import Variable
 
 from allennlp.common.checks import check_dimensions_match
 from allennlp.data import Vocabulary
@@ -16,6 +17,28 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
+
+from multitask.metrics import MultipleLoss
+
+
+def sample_gumbel(shape, eps=1e-20):
+    U = torch.rand(shape).cuda()
+    return -Variable(torch.log(-torch.log(U + eps) + eps))
+
+
+def gumbel_softmax_sample(logits, temperature):
+    y = logits + sample_gumbel(logits.size())
+    return F.softmax(y / temperature, dim=-1)
+
+
+def gumbel_softmax(logits, temperature):
+    y = gumbel_softmax_sample(logits, temperature)
+    shape = y.size()
+    _, ind = y.max(dim=-1)
+    y_hard = torch.zeros_like(y).view(-1, shape[-1])
+    y_hard.scatter_(1, ind.view(-1, 1), 1)
+    y_hard = y_hard.view(*shape)
+    return (y_hard - y).detach() + y
 
 
 @Model.register('semi_cvae_oie')
@@ -104,6 +127,7 @@ class SemiConditionalVAEOIE(Model):
         self.y1_span_metric = \
             SpanBasedF1Measure(vocab, tag_namespace=self._y1_label_ns, ignore_classes=['V'])
         self.y1_accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
+        self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l'])
 
         initializer(self)
 
@@ -192,6 +216,7 @@ class SemiConditionalVAEOIE(Model):
             sup_x = concat_emb.masked_select(sup_tm.view(-1, 1, 1)).view(-1, sl, es)
             sup_mask = mask.masked_select(sup_tm.view(-1, 1)).view(-1, sl)
             sup_weight = weight.masked_select(sup_tm)
+            sup_num = (sup_mask.sum(1) > 0).int().sum().item()
             sup_y1 = None
             if tags is not None:
                 sup_y1 = tags.masked_select(sup_tm.view(-1, 1)).view(-1, sl)
@@ -200,11 +225,13 @@ class SemiConditionalVAEOIE(Model):
             output_dict['class_probabilities'] = sup_y1_cp
             output_dict['mask'] = sup_mask
             if tags is not None:
-                sup_unsup_loss += (sup_y1_nll * sup_weight).sum()
+                sup_loss = (sup_y1_nll * sup_weight).sum()
+                sup_unsup_loss += sup_loss
                 # metrics
                 if not self.ignore_span_metric:
                     self.y1_span_metric(sup_y1_cp, sup_y1, sup_mask)
                 self.y1_accuracy(sup_y1_logits, sup_y1, sup_mask)
+                self.y1_multi_loss('sup_l', sup_loss.item(), count=sup_num)
 
         # unsupervised
         unsup_tm = task_labels.eq(self._y2_ind)
@@ -213,6 +240,7 @@ class SemiConditionalVAEOIE(Model):
             unsup_y2 = tags.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_mask = mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_weight = weight.masked_select(unsup_tm)
+            unsup_num = (unsup_mask.sum(1) > 0).int().sum().item()
 
             # sample
             # need to replace the old "upsup_x" and "unsup_y2" because there
@@ -234,17 +262,20 @@ class SemiConditionalVAEOIE(Model):
             if self._infer_algo == 'reinforce':
                 # TODO: clip reward?
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
-                y1_nll_with_reward = enc_y1_nll * (encoder_reward.detach() - 1) # be mindful of the 1
+                y1_nll_with_reward = enc_y1_nll * (encoder_reward.detach() - self._beta) # be mindful of the beta
 
             # overall loss
             if self._infer_algo == 'reinforce':
-                decoder_loss = (y2_nll * unsup_weight).sum()
                 encoder_loss = (y1_nll_with_reward * unsup_weight).sum()
-                discriminator_loss = (dis_y1_nll * unsup_weight).sum()
+                decoder_loss = (y2_nll * unsup_weight).sum()
+                discriminator_loss = (self._beta * dis_y1_nll * unsup_weight).sum() # be mindful of the beta
                 sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss
+                self.y1_multi_loss('enc_l', encoder_loss.item(), count=unsup_num)
+                self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
+                self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
                 vae_loss = y2_nll + kl
-                sup_unsup_loss += vae_loss
+                sup_unsup_loss += (vae_loss * unsup_weight).sum()
 
         if tags is not None:
             #output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
@@ -292,6 +323,7 @@ class SemiConditionalVAEOIE(Model):
         metric_dict.update(sm)
         # accuracy
         metric_dict['y1_accuracy'] = self.y1_accuracy.get_metric(reset=reset)
+        metric_dict.update(self.y1_multi_loss.get_metric(reset=reset))
         return metric_dict
 
 
