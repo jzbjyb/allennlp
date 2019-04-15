@@ -2,7 +2,7 @@ from typing import Dict, List, TextIO, Optional, Any, Tuple
 
 from overrides import overrides
 import torch
-from torch.nn.modules import Linear, Dropout
+from torch.nn.modules import Linear, Dropout, Dropout2d
 import torch.nn.functional as F
 import torch.distributions as distributions
 from torch.autograd import Variable
@@ -73,6 +73,9 @@ class SemiConditionalVAEOIE(Model):
                  decode_method: str = 'all',
                  beta: float = 1.0, # a coefficient that controls the strength of KL term (similar to beta-VAE)
                  embedding_dropout: float = 0.0,
+                 word_dropout: float = 0.0,  # dropout a word
+                 word_proj_dim: int = None,  # the dim of projection of word embedding
+                 binary_feature_dim_decoder: int = None,  # binary emb used in decoder
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -109,6 +112,7 @@ class SemiConditionalVAEOIE(Model):
 
         # dropout
         self.embedding_dropout = Dropout(p=embedding_dropout)
+        self.word_dropout = Dropout2d(p=word_dropout)
 
         # discriminator p(y1|x)
         self.text_field_embedder = text_field_embedder
@@ -133,8 +137,20 @@ class SemiConditionalVAEOIE(Model):
         self.y1_embedding = Embedding(self._y1_num_class, y_feature_dim)
         self.decoder = decoder
         if self._decode_method == 'all':
-            check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim + y_feature_dim,
-                                   decoder.get_input_dim(),
+            self._word_proj_dim = word_proj_dim
+            if word_proj_dim:
+                self.word_projection_layer = TimeDistributed(Linear(
+                    text_field_embedder.get_output_dim(), word_proj_dim))
+                x_dim = word_proj_dim
+            else:
+                x_dim = text_field_embedder.get_output_dim()
+            self._binary_feature_dim_decoder = binary_feature_dim_decoder
+            if binary_feature_dim_decoder:
+                self.binary_feature_embedding_decoder = Embedding(2, binary_feature_dim_decoder)
+                x_dim += binary_feature_dim_decoder
+            else:
+                x_dim += binary_feature_dim
+            check_dimensions_match(x_dim + y_feature_dim, decoder.get_input_dim(),
                                    'text emb dim + verb indicator emb dim + y1 emb dim',
                                    'decoder input dim')
         elif self._decode_method == 'partial':
@@ -149,7 +165,7 @@ class SemiConditionalVAEOIE(Model):
         if infer_algo == 'reinforce':
             self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l'])
         elif infer_algo == 'gumbel_softmax':
-            self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l'])
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l', 'recon_l', 'kl_l'])
 
         initializer(self)
 
@@ -214,7 +230,10 @@ class SemiConditionalVAEOIE(Model):
             return x_emb, y2, y1, y1_oh, y1_nll
 
 
-    def vae_decode(self, x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, x_emb_size)
+    def vae_decode(self,
+                   x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, x_emb_size)
+                   t_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, t_emb_size)
+                   v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
                    # SHAPE: (beam_size, batch_size, seq_len) or (beam_size, batch_size, seq_len, num_class)
                    y1: torch.LongTensor,
                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
@@ -227,12 +246,19 @@ class SemiConditionalVAEOIE(Model):
             y1_emb = torch.matmul(y1, self.y1_embedding.weight)
         # SHAPE: (beam_size * batch_size, seq_len, y_emb_size)
         y1_emb = y1_emb.view(beam_size * batch_size, seq_len, -1)
-        # SHAPE: (beam_size * batch_size, seq_len)
-        y2 = y2.repeat(beam_size, 1)
+
+        t_emb = self.word_dropout(t_emb)  # TODO: is Dropout2d problematic?
+        if self._word_proj_dim:
+            t_emb = self.word_projection_layer(t_emb)
+        x_emb = torch.cat([t_emb, v_emb], -1)
         # SHAPE: (beam_size * batch_size, seq_len, x_emb_size)
         x_emb = x_emb.repeat(beam_size, 1, 1)
+
+        # SHAPE: (beam_size * batch_size, seq_len)
+        y2 = y2.repeat(beam_size, 1)
         # SHAPE: (beam_size * batch_size, seq_len)
         mask = mask.repeat(beam_size, 1)
+
         if self._decode_method == 'all':
             # concat_emb must be concatenated by the order of word, verb, y1
             concat_emb = torch.cat([x_emb, y1_emb], -1)
@@ -285,6 +311,8 @@ class SemiConditionalVAEOIE(Model):
         verb_emb = self.binary_feature_embedding(verb_indicator.long())
         concat_emb = torch.cat([text_emb, verb_emb], -1)
         bs, sl, es = concat_emb.size()
+        _, _, tes = text_emb.size()
+        _, _, ves = verb_emb.size()
         mask = get_text_field_mask(tokens)
 
         sup_unsup_loss = 0.0
@@ -316,6 +344,9 @@ class SemiConditionalVAEOIE(Model):
         unsup_tm = task_labels.eq(self._y2_ind)
         if unsup_tm.sum().item() > 0 and tags is not None: # skip if no unsupervised data exists
             unsup_x = concat_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, es)
+            unsup_t = text_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, tes)  # used in decoder
+            unsup_v = verb_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, ves)  # used in decoder
+            unsup_verb = verb_indicator.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)  # used in decoder
             unsup_y2 = tags.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_mask = mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_weight = weight.masked_select(unsup_tm)
@@ -330,10 +361,12 @@ class SemiConditionalVAEOIE(Model):
 
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
+            if self._binary_feature_dim_decoder:
+                unsup_v = self.binary_feature_embedding_decoder(unsup_verb.long())
             if self._infer_algo == 'reinforce':
-                y2_nll = self.vae_decode(unsup_x, unsup_y1, unsup_y2, unsup_mask)
+                y2_nll = self.vae_decode(unsup_x, unsup_t, unsup_v, unsup_y1, unsup_y2, unsup_mask)
             elif self._infer_algo == 'gumbel_softmax':
-                y2_nll = self.vae_decode(unsup_x, unsup_y1_oh, unsup_y2, unsup_mask)
+                y2_nll = self.vae_decode(unsup_x, unsup_t, unsup_v, unsup_y1_oh, unsup_y2, unsup_mask)
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)
@@ -364,9 +397,13 @@ class SemiConditionalVAEOIE(Model):
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
-                elbo_loss = ((y2_nll + kl).mean(0) * unsup_weight).sum()
+                recon_loss = (y2_nll.mean(0) * unsup_weight).sum()
+                kl_loss = (kl.mean(0) * unsup_weight).sum()
+                elbo_loss = recon_loss + kl_loss
                 sup_unsup_loss += elbo_loss
                 self.y1_multi_loss('elbo_l', elbo_loss.item(), count=unsup_num)
+                self.y1_multi_loss('recon_l', recon_loss.item(), count=unsup_num)
+                self.y1_multi_loss('kl_l', kl_loss.item(), count=unsup_num)
 
         if tags is not None:
             #output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
