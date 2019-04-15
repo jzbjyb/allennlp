@@ -3,7 +3,7 @@ from typing import Dict, List, TextIO, Optional, Any, Tuple
 
 from overrides import overrides
 import torch
-from torch.nn.modules import Linear, Dropout
+from torch.nn.modules import Linear, Dropout, Dropout2d
 import torch.nn.functional as F
 
 from allennlp.common.checks import check_dimensions_match
@@ -32,6 +32,8 @@ class SrlOieRetag(Model):
                  # including "xoie_srl", "xsrl_oie", "oie_srl", and "srl_oie"
                  mode: str,
                  embedding_dropout: float = 0.0,
+                 word_dropout: float = 0.0,  # dropout a word
+                 word_proj_dim: int = None,  # the dim of projection of word embedding
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -57,11 +59,18 @@ class SrlOieRetag(Model):
         self.tag_feature_embedding = Embedding(
             self.vocab.get_vocab_size(self.y1_ns), tag_feature_dim)
         self.embedding_dropout = Dropout(p=embedding_dropout)
+        self.word_dropout = Dropout2d(p=word_dropout)
+        self.word_proj_dim = word_proj_dim
+        if word_proj_dim:
+            self.word_projection_layer = TimeDistributed(Linear(
+                text_field_embedder.get_output_dim(), word_proj_dim))
+            x_dim = word_proj_dim + binary_feature_dim
+        else:
+            x_dim = text_field_embedder.get_output_dim() + binary_feature_dim
+
         self.encoder = encoder
         if mode in {'xoie_srl', 'xsrl_oie'}:
-            check_dimensions_match(
-                text_field_embedder.get_output_dim() + binary_feature_dim + tag_feature_dim,
-                encoder.get_input_dim(),
+            check_dimensions_match(x_dim + tag_feature_dim, encoder.get_input_dim(),
                 'text embedding dim + verb indicator embedding dim + tag embedding dim',
                 'encoder input dim')
         elif mode in {'oie_srl', 'srl_oie'}:
@@ -91,6 +100,9 @@ class SrlOieRetag(Model):
 
         if self.has_x:
             emb_text = self.embedding_dropout(self.text_field_embedder(tokens))
+            emb_text = self.word_dropout(emb_text)  # TODO: is Dropout2d problematic?
+            if self.word_proj_dim:
+                emb_text = self.word_projection_layer(emb_text)
             emb_verb = self.binary_feature_embedding(verb_indicator.long())
             # Concatenate the verb feature onto the embedded text. This now
             # has shape (batch_size, sequence_length, embedding_dim + binary_feature_dim).

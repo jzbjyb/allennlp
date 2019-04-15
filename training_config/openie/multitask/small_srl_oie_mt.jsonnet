@@ -17,8 +17,8 @@
     "text_field_embedder": {
       "elmo": {
         "type": "elmo_token_embedder",
-        "options_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
-        "weight_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
+        "options_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
+        "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
         "dropout": 0.1
       }
@@ -34,7 +34,7 @@
         "srl_tag_projection_layer.*",
         {
           "type": "pretrained",
-          "weights_file_path": "/home/zhengbaj/exp/allennlp/output/srl_official_srl_small/best.th",
+          "weights_file_path": "output/srl_official_srl_small/best.th",
           "parameter_name_overrides": {
             "srl_tag_projection_layer._module.weight": "tag_projection_layer._module.weight",
             "srl_tag_projection_layer._module.bias": "tag_projection_layer._module.bias"
@@ -45,7 +45,7 @@
         "^((?!(tag_projection_layer|task_encoder)).)*$",
         {
           "type": "pretrained",
-          "weights_file_path": "/home/zhengbaj/exp/allennlp/output/srl_official_srl_small/best.th"
+          "weights_file_path": "output/srl_official_srl_small/best.th"
         }
       ]
     ],
