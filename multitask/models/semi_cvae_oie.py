@@ -80,6 +80,9 @@ class SemiConditionalVAEOIE(Model):
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
                  ignore_span_metric: bool = False,
+                 # Whether to use the tag results of (viterbi) decoding to compute span metric,
+                 # which is more consistent with test-time performance.
+                 decode_span_metric: bool = False,
                  use_crf: bool = False) -> None:
         super(SemiConditionalVAEOIE, self).__init__(vocab, regularizer)
         self._y1_ns = y1_ns
@@ -106,6 +109,7 @@ class SemiConditionalVAEOIE(Model):
         self._beta = beta
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
+        self.decode_span_metric = decode_span_metric
         self.use_crf = use_crf  # TODO: add crf
         # use for sampling process at training time
         self.register_buffer('_pairwise_potential', self.get_viterbi_pairwise_potentials())
@@ -336,7 +340,11 @@ class SemiConditionalVAEOIE(Model):
                 sup_unsup_loss += sup_loss
                 # metrics
                 if not self.ignore_span_metric:
-                    self.y1_span_metric(sup_y1_cp, sup_y1, sup_mask)
+                    if self.decode_span_metric:
+                        self.y1_span_metric(
+                            self.get_decode_pseudo_class_prob(output_dict), sup_y1, sup_mask)
+                    else:
+                        self.y1_span_metric(sup_y1_cp, sup_y1, sup_mask)
                 self.y1_accuracy(sup_y1_logits, sup_y1, sup_mask)
                 self.y1_multi_loss('sup_l', sup_loss.item(), count=sup_num)
 
@@ -412,6 +420,18 @@ class SemiConditionalVAEOIE(Model):
         return output_dict
 
 
+    def get_decode_pseudo_class_prob(self, output_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
+        '''
+        Use decode to get tag results used in test-time and get their pseudo class probability.
+        '''
+        output_dict = self.decode(output_dict)
+        cp = torch.zeros_like(output_dict['class_probabilities'])
+        for i, tags in enumerate(output_dict['tags_ind']):
+            for j, t in enumerate(tags):
+                cp[i, j, t] = 1.0
+        return cp
+
+
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -426,6 +446,7 @@ class SemiConditionalVAEOIE(Model):
             predictions_list = [all_predictions[i].detach().cpu() for i in range(all_predictions.size(0))]
         else:
             predictions_list = [all_predictions]
+        all_tags_ind = []
         all_tags = []
         all_probs = []
         transition_matrix = self.get_viterbi_pairwise_potentials()
@@ -437,6 +458,8 @@ class SemiConditionalVAEOIE(Model):
             tags = [self.vocab.get_token_from_index(x, namespace='MT_gt_labels')
                     for x in max_likelihood_sequence] # TODO: add more task and avoid "gt"
             all_tags.append(tags)
+            all_tags_ind.append(max_likelihood_sequence)
+        output_dict['tags_ind'] = all_tags_ind
         output_dict['tags'] = all_tags
         output_dict['probs'] = all_probs
         return output_dict
