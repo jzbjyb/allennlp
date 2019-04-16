@@ -415,8 +415,8 @@ class SemiConditionalVAEOIE(BaseModel):
                 self.y1_multi_loss('kl_l', kl_loss.item(), count=unsup_num)
 
         if tags is not None:
-            #output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
-            output_dict['loss'] = sup_unsup_loss / (weight.sum() + 1e-13) # TODO: use both weight and mask?
+            output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
+            #output_dict['loss'] = sup_unsup_loss / (weight.sum() + 1e-13) # TODO: use both weight and mask?
 
         return output_dict
 
