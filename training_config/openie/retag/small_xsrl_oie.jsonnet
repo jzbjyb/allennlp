@@ -18,7 +18,8 @@
         "options_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
         "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
-        "dropout": 0.1
+        "dropout": 0.1,
+        "stateful": false
       }
     },
     "encoder": {
@@ -60,6 +61,6 @@
     }
   },
   "vocabulary": { // use the multitask vocab
-    "directory_path": "output/openie/multitask/small_srl_oie_mt/vocabulary/"
+    "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
   }
 }
