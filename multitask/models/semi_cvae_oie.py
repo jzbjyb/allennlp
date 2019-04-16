@@ -172,7 +172,7 @@ class SemiConditionalVAEOIE(BaseModel):
             SpanBasedF1Measure(vocab, tag_namespace=self._y1_label_ns, ignore_classes=['V'])
         self.y1_accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
         if infer_algo == 'reinforce':
-            self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l'])
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l', 'base_l'])
         elif infer_algo == 'gumbel_softmax':
             self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l', 'recon_l', 'kl_l'])
 
@@ -400,16 +400,19 @@ class SemiConditionalVAEOIE(BaseModel):
                 # reduce variance
                 encoder_reward = encoder_reward - (encoder_reward.mean(0, keepdim=True) * self.w + self.b)
                 y1_nll_with_reward = enc_y1_nll * encoder_reward
+                baseline_loss = encoder_reward ** 2
 
             # overall loss
             if self._infer_algo == 'reinforce':
                 encoder_loss = (y1_nll_with_reward.mean(0) * unsup_weight).sum()
                 decoder_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 discriminator_loss = (self._beta * dis_y1_nll.mean(0) * unsup_weight).sum() # be mindful of the beta
-                sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss
+                baseline_loss = (baseline_loss.mean(0) * unsup_weight).sum()
+                sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
                 self.y1_multi_loss('enc_l', encoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
+                self.y1_multi_loss('base_l', baseline_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
                 recon_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 kl_loss = (kl.mean(0) * unsup_weight).sum()
