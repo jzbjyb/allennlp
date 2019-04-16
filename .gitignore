@@ -70,9 +70,9 @@ Temporary Items
 # <- macos
 
 # custom
-data/
-evaluation/
+data
+evaluation
 output
 pretrain
-slurm_out/
+slurm_out
 
