@@ -2,6 +2,7 @@ from typing import Dict, List, TextIO, Optional, Any, Tuple
 
 from overrides import overrides
 import torch
+import torch.nn as nn
 from torch.nn.modules import Linear, Dropout, Dropout2d
 import torch.nn.functional as F
 import torch.distributions as distributions
@@ -137,6 +138,9 @@ class SemiConditionalVAEOIE(BaseModel):
                                'text emb dim + verb indicator emb dim + y2 emb dim',
                                'encoder input dim')
         self.enc_y1_proj = TimeDistributed(Linear(encoder.get_output_dim(), self._y1_num_class))
+        # encoder reward estimation
+        self.w = nn.Parameter(torch.ones(1))
+        self.b = nn.Parameter(torch.zeros(1))
 
         # decoder p(y2|x, y1) or p(y2|y1)
         self.y1_embedding = Embedding(self._y1_num_class, y_feature_dim)
@@ -393,7 +397,8 @@ class SemiConditionalVAEOIE(BaseModel):
                 # SHAPE: (beam_size, batch_size)
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
                 encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
-                encoder_reward = encoder_reward - encoder_reward.mean()  # reduce variance
+                # reduce variance
+                encoder_reward = encoder_reward - (encoder_reward.mean(0, keepdim=True) * self.w + self.b)
                 y1_nll_with_reward = enc_y1_nll * encoder_reward
 
             # overall loss
