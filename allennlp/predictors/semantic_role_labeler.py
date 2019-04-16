@@ -143,7 +143,7 @@ class SemanticRoleLabelerPredictor(Predictor):
         tokens = self._tokenizer.split_words(sentence)
         return self.tokens_to_instances(tokens)
 
-    def predict_conll_file(self, conll_filepath: str, batch_size: int = 256):
+    def predict_conll_file(self, conll_filepath: str, batch_size: int = 256, is_dir: bool = False):
         # get instances and raw tags
         instances = []
         raw_tags_li = []
