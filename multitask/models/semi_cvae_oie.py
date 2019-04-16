@@ -19,6 +19,7 @@ from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
 from multitask.metrics import MultipleLoss
+from .base import BaseModel
 
 
 def sample_gumbel(shape, eps=1e-20):
@@ -54,7 +55,7 @@ def gumbel_softmax_multiple(logits,  # SHAPE: (batch_size, seq_len, num_class)
 
 
 @Model.register('semi_cvae_oie')
-class SemiConditionalVAEOIE(Model):
+class SemiConditionalVAEOIE(BaseModel):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  binary_feature_dim: int,
@@ -420,18 +421,6 @@ class SemiConditionalVAEOIE(Model):
         return output_dict
 
 
-    def get_decode_pseudo_class_prob(self, output_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
-        '''
-        Use decode to get tag results used in test-time and get their pseudo class probability.
-        '''
-        output_dict = self.decode(output_dict)
-        cp = torch.zeros_like(output_dict['class_probabilities'])
-        for i, tags in enumerate(output_dict['tags_ind']):
-            for j, t in enumerate(tags):
-                cp[i, j, t] = 1.0
-        return cp
-
-
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -470,36 +459,9 @@ class SemiConditionalVAEOIE(Model):
         # span metric
         sm = {'{}_{}'.format('y1', x): y for x, y in
               self.y1_span_metric.get_metric(reset=reset).items()
-              if 'f1-measure-overall' in x}
+              if '-overall' in x}
         metric_dict.update(sm)
         # accuracy
         metric_dict['y1_accuracy'] = self.y1_accuracy.get_metric(reset=reset)
         metric_dict.update(self.y1_multi_loss.get_metric(reset=reset))
         return metric_dict
-
-
-    def get_viterbi_pairwise_potentials(self):
-        """
-        Generate a matrix of pairwise transition potentials for the BIO labels.
-        The only constraint implemented here is that I-XXX labels must be preceded
-        by either an identical I-XXX tag or a B-XXX tag. In order to achieve this
-        constraint, pairs of labels which do not satisfy this constraint have a
-        pairwise potential of -inf.
-
-        Returns
-        -------
-        transition_matrix : torch.Tensor
-            A (num_labels, num_labels) matrix of pairwise potentials.
-        """
-        # TODO: add more task and avoid "gt"
-        all_labels = self.vocab.get_index_to_token_vocabulary('MT_gt_labels')
-        num_labels = len(all_labels)
-        transition_matrix = torch.zeros([num_labels, num_labels])
-
-        for i, previous_label in all_labels.items():
-            for j, label in all_labels.items():
-                # I labels can only be preceded by themselves or
-                # their corresponding B tag.
-                if i != j and label[0] == 'I' and not previous_label == 'B' + label[1:]:
-                    transition_matrix[i, j] = float('-inf')
-        return transition_matrix
