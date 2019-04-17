@@ -7,8 +7,8 @@
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_split_rm_coor/oie2016.train.all_tagging",
-  "validation_data_path": "data/openie/conll_for_allennlp/dev_split_rm_coor/oie2016.dev.all_tagging",
+  "train_data_path": "data/openie/conll_for_allennlp/train_split_rm_coor/parallel/oie2016.train.all_tagging",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_split_rm_coor/parallel/oie2016.dev.all_tagging",
   "model": {
     "type": "srl_oie_retag",
     "mode": "xoie_srl",
