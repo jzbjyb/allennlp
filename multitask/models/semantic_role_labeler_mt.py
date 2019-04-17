@@ -223,7 +223,7 @@ class SemanticRoleLabelerMultiTask(BaseModel):
                 all_loss += t_loss / ((t_mask.sum(1) > 0).float().sum() + 1e-13) # task average
                 # calculate metrics
                 if not self.ignore_span_metric:
-                    if self.decode_span_metric:
+                    if self.decode_span_metric and task_name == 'gt':  # TODO: avoid "gt"
                         od = {'class_probabilities': t_cp, 'mask': t_mask}
                         getattr(self, '{}_span_metric'.format(task_name))(
                             self.get_decode_pseudo_class_prob(od), t_tags, t_mask)

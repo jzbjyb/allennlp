@@ -69,6 +69,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  sample_num: int = 1, # number of samples generated from encoder
                  sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
+                 baseline: str = 'wb',  # baseline used in reinforce
                  temperature: float = 1.0,  # temperature in gumbel softmax
                  # "all" means using both x and y1 to decode y2,
                  # "partial" means only using y1 to decode y2
@@ -104,6 +105,8 @@ class SemiConditionalVAEOIE(BaseModel):
         self._sample_algo = sample_algo
         assert infer_algo in {'reinforce', 'gumbel_softmax'}, 'infer_algo not supported'
         self._infer_algo = infer_algo
+        assert baseline in {'wb', 'mean'}, 'baseline not supported'
+        self._baseline = baseline
         self._temperature = temperature
         assert decode_method in {'all', 'partial'}, 'decode_method not supported'
         self._decode_method = decode_method
@@ -139,8 +142,9 @@ class SemiConditionalVAEOIE(BaseModel):
                                'encoder input dim')
         self.enc_y1_proj = TimeDistributed(Linear(encoder.get_output_dim(), self._y1_num_class))
         # encoder reward estimation
-        self.w = nn.Parameter(torch.ones(1))
-        self.b = nn.Parameter(torch.zeros(1))
+        if self._baseline == 'wb':
+            self.w = nn.Parameter(torch.ones(1))
+            self.b = nn.Parameter(torch.zeros(1))
 
         # decoder p(y2|x, y1) or p(y2|y1)
         self.y1_embedding = Embedding(self._y1_num_class, y_feature_dim)
@@ -398,7 +402,11 @@ class SemiConditionalVAEOIE(BaseModel):
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
                 encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
                 # reduce variance
-                encoder_reward = encoder_reward - (encoder_reward.mean(0, keepdim=True) * self.w + self.b)
+                if self._baseline == 'wb':
+                    baseline = encoder_reward.mean(0, keepdim=True) * self.w + self.b
+                elif self._baseline == 'mean':
+                    baseline = encoder_reward.mean(0, keepdim=True)
+                encoder_reward = encoder_reward - baseline
                 y1_nll_with_reward = enc_y1_nll * encoder_reward
                 baseline_loss = encoder_reward ** 2
 
@@ -426,39 +434,6 @@ class SemiConditionalVAEOIE(BaseModel):
             output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
             #output_dict['loss'] = sup_unsup_loss / (weight.sum() + 1e-13) # TODO: use both weight and mask?
 
-        return output_dict
-
-
-    @overrides
-    def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """
-        Does constrained viterbi decoding on class probabilities output in :func:`forward`.  The
-        constraint simply specifies that the output tags must be a valid BIO sequence.  We add a
-        ``"tags"`` key to the dictionary with the result.
-        """
-        all_predictions = output_dict['class_probabilities']
-        sequence_lengths = get_lengths_from_binary_sequence_mask(output_dict["mask"]).data.tolist()
-
-        if all_predictions.dim() == 3:
-            predictions_list = [all_predictions[i].detach().cpu() for i in range(all_predictions.size(0))]
-        else:
-            predictions_list = [all_predictions]
-        all_tags_ind = []
-        all_tags = []
-        all_probs = []
-        transition_matrix = self.get_viterbi_pairwise_potentials()
-        for predictions, length in zip(predictions_list, sequence_lengths):
-            max_likelihood_sequence, score = viterbi_decode(predictions[:length], transition_matrix)
-            probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
-                     for i in range(len(max_likelihood_sequence))]
-            all_probs.append(probs)
-            tags = [self.vocab.get_token_from_index(x, namespace='MT_gt_labels')
-                    for x in max_likelihood_sequence] # TODO: add more task and avoid "gt"
-            all_tags.append(tags)
-            all_tags_ind.append(max_likelihood_sequence)
-        output_dict['tags_ind'] = all_tags_ind
-        output_dict['tags'] = all_tags
-        output_dict['probs'] = all_probs
         return output_dict
 
 
