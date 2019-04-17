@@ -70,6 +70,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
                  baseline: str = 'wb',  # baseline used in reinforce
+                 clip_reward: float = None,  # avoid very small learning signal
                  temperature: float = 1.0,  # temperature in gumbel softmax
                  # "all" means using both x and y1 to decode y2,
                  # "partial" means only using y1 to decode y2
@@ -107,6 +108,7 @@ class SemiConditionalVAEOIE(BaseModel):
         self._infer_algo = infer_algo
         assert baseline in {'wb', 'mean'}, 'baseline not supported'
         self._baseline = baseline
+        self._clip_reward = clip_reward
         self._temperature = temperature
         assert decode_method in {'all', 'partial'}, 'decode_method not supported'
         self._decode_method = decode_method
@@ -397,7 +399,6 @@ class SemiConditionalVAEOIE(BaseModel):
             # only REINFORCE needs manually calculate encoder loss,
             # while gumbel_softmax could directly do bp
             if self._infer_algo == 'reinforce':
-                # TODO: clip reward?
                 # SHAPE: (beam_size, batch_size)
                 encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
                 encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
@@ -407,7 +408,12 @@ class SemiConditionalVAEOIE(BaseModel):
                 elif self._baseline == 'mean':
                     baseline = encoder_reward.mean(0, keepdim=True)
                 encoder_reward = encoder_reward - baseline
-                y1_nll_with_reward = enc_y1_nll * encoder_reward
+                # clip reward
+                if self._clip_reward is not None:
+                    clipped_encoder_reward = torch.clamp(encoder_reward, min=self._clip_reward)
+                else:
+                    clipped_encoder_reward = encoder_reward
+                y1_nll_with_reward = enc_y1_nll * clipped_encoder_reward
                 baseline_loss = encoder_reward ** 2
 
             # overall loss
