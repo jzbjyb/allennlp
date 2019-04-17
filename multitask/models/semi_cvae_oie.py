@@ -108,6 +108,7 @@ class SemiConditionalVAEOIE(BaseModel):
         self._infer_algo = infer_algo
         assert baseline in {'wb', 'mean'}, 'baseline not supported'
         self._baseline = baseline
+        assert clip_reward >= 0, 'clip_reward should be nonnegative'
         self._clip_reward = clip_reward
         self._temperature = temperature
         assert decode_method in {'all', 'partial'}, 'decode_method not supported'
@@ -410,7 +411,8 @@ class SemiConditionalVAEOIE(BaseModel):
                 encoder_reward = encoder_reward - baseline
                 # clip reward
                 if self._clip_reward is not None:
-                    clipped_encoder_reward = torch.clamp(encoder_reward, min=self._clip_reward)
+                    clipped_encoder_reward = torch.clamp(
+                        encoder_reward, min=-self._clip_reward, max=self._clip_reward)
                 else:
                     clipped_encoder_reward = encoder_reward
                 y1_nll_with_reward = enc_y1_nll * clipped_encoder_reward
