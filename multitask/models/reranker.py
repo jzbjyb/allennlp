@@ -29,10 +29,11 @@ class Reranker(SemanticRoleLabelerMultiTask):
                  task_encoder_requires_grad: bool = True,
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
-                 ignore_span_metric: bool = False) -> None:
+                 ignore_span_metric: bool = False,
+                 use_crf: bool = False) -> None:
         super().__init__(vocab, text_field_embedder, encoder, binary_feature_dim, embedding_dropout,
                          initializer, task_encoder, encoder_requires_grad, task_encoder_requires_grad,
-                         regularizer, label_smoothing, ignore_span_metric)
+                         regularizer, label_smoothing, ignore_span_metric, use_crf)
         #self.score_layer = Linear(1, 1)
         #self.score_bias = torch.nn.Parameter(torch.zeros(1))
         self.alpha = 1.0 # weights for cross entropy loss
@@ -52,13 +53,19 @@ class Reranker(SemanticRoleLabelerMultiTask):
         log_probs = torch.log(probs)
         mask = output_dict['mask']
         # calculate confidence scores
-        lpt = torch.gather(log_probs.view(-1, log_probs.size(-1)),
-                           dim=1, index=tags.view(-1, 1)).view(*tags.size())
-        lpt *= mask.float()
-        alpt = lpt.sum(-1) / (mask.sum(-1).float() + 1e-13)
+        if self.use_crf:
+            # joint average log likelihood from CRF
+            lpt = self.crf(logits, tags, mask, agg=None)
+            alpt = lpt / (mask.sum(1).float() + 1e-13)  # average over words in each seq
+        else:
+            # independent average log likelihood
+            lpt = torch.gather(log_probs.view(-1, log_probs.size(-1)),
+                               dim=1, index=tags.view(-1, 1)).view(*tags.size())
+            lpt *= mask.float()
+            alpt = lpt.sum(-1) / (mask.sum(-1).float() + 1e-13)
         #scores = self.score_layer(alpt.unsqueeze(-1)).squeeze(-1)
-        scores = alpt # use avg log prob directly as scores
         #scores = alpt + self.score_bias # use avg log prob added with a bias
+        scores = alpt # use avg log prob directly as scores
         output_dict['scores'] = scores
         if labels is not None:
             labels = labels.float()
