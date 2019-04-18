@@ -8,4 +8,4 @@ model_dir=$2
 out_dir=$3
 args="${@:4}"
 
-allennlp fine-tune -c ${config} -m ${model_dir}/model.tar.gz -s ${out_dir} --include-package multitask ${args}
+allennlp fine-tune -c ${config} -m ${model_dir} -s ${out_dir} --include-package multitask ${args}
