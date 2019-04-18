@@ -107,5 +107,6 @@ class SrlReader(DatasetReader):
         else:
             verb = tokens[verb_label.index(1)].text
         fields["metadata"] = MetadataField({"words": [x.text for x in tokens],
-                                            "verb": verb})
+                                            "verb": verb,
+                                            'verb_inds': verb_label})
         return Instance(fields)

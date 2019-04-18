@@ -159,10 +159,11 @@ class SemanticRoleLabeler(Model):
         # when we do viterbi inference in self.decode.
         output_dict["mask"] = mask
 
-        words, verbs = zip(*[(x["words"], x["verb"]) for x in metadata])
+        words, verbs, verb_inds = zip(*[(x['words'], x['verb'], x['verb_inds']) for x in metadata])
         if metadata is not None:
-            output_dict["words"] = list(words)
-            output_dict["verb"] = list(verbs)
+            output_dict['words'] = list(words)
+            output_dict['verb'] = list(verbs)
+            output_dict['verb_inds'] = list(verb_inds)
         return output_dict
 
     @overrides

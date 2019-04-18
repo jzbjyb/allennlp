@@ -1,7 +1,6 @@
 import logging
-from typing import Dict, List, TextIO, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 
-from overrides import overrides
 import torch
 from torch.nn.modules import Linear, Dropout, Dropout2d
 import torch.nn.functional as F
@@ -13,16 +12,15 @@ from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
-from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
-from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
+from .base import BaseModel
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 @Model.register('srl_oie_retag')
-class SrlOieRetag(Model):
+class SrlOieRetag(BaseModel):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  encoder: Seq2SeqEncoder,  # the base encoder shared across tasks
@@ -38,10 +36,6 @@ class SrlOieRetag(Model):
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
                  use_crf: bool = False) -> None:
-        super(SrlOieRetag, self).__init__(vocab, regularizer)
-        self._label_smoothing = label_smoothing
-        self.use_crf = use_crf  # whether to use CRF decoding TODO: add crf
-
         # determine the input and output of the model
         assert mode in {'xoie_srl', 'xsrl_oie', 'oie_srl', 'srl_oie'}, 'mode not supported'
         self.mode = mode
@@ -52,6 +46,11 @@ class SrlOieRetag(Model):
         self.y2_ns = 'MT_{}_labels'.format('gt' if self.y2 == 'oie' else self.y2)
         logger.info('The retag is {}{} -> {}'.format(
             'x,' if self.has_x else '', self.y1, self.y2))
+
+        # init base model
+        super(SrlOieRetag, self).__init__(self.y2_ns, vocab, regularizer)
+        self._label_smoothing = label_smoothing
+        self.use_crf = use_crf  # whether to use CRF decoding TODO: add crf
 
         # model
         self.text_field_embedder = text_field_embedder
@@ -130,48 +129,8 @@ class SrlOieRetag(Model):
         return output_dict
 
 
-    @overrides
-    def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        all_predictions = output_dict['class_probabilities']
-        sequence_lengths = get_lengths_from_binary_sequence_mask(output_dict['mask']).data.tolist()
-
-        if all_predictions.dim() == 3:
-            predictions_list = [all_predictions[i].detach().cpu() for i in range(all_predictions.size(0))]
-        else:
-            predictions_list = [all_predictions]
-
-        all_tags = []
-        all_probs = []
-        transition_matrix = self.get_viterbi_pairwise_potentials()
-        for predictions, length in zip(predictions_list, sequence_lengths):
-            max_likelihood_sequence, score = viterbi_decode(predictions[:length], transition_matrix)
-            probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
-                     for i in range(len(max_likelihood_sequence))]
-            all_probs.append(probs)
-            tags = [self.vocab.get_token_from_index(x, namespace=self.y2_ns)
-                    for x in max_likelihood_sequence]
-            all_tags.append(tags)
-        output_dict['tags'] = all_tags
-        output_dict['probs'] = all_probs
-        return output_dict
-
-
     def get_metrics(self, reset: bool = False):
         metric_dict = {x: y for x, y in self.span_metric.get_metric(reset=reset).items()
                        if 'overall' in x}
         metric_dict['accuracy'] = self.accuracy.get_metric(reset=reset)
         return metric_dict
-
-
-    def get_viterbi_pairwise_potentials(self):
-        all_labels = self.vocab.get_index_to_token_vocabulary(self.y2_ns)
-        num_labels = len(all_labels)
-        transition_matrix = torch.zeros([num_labels, num_labels])
-
-        for i, previous_label in all_labels.items():
-            for j, label in all_labels.items():
-                # I labels can only be preceded by themselves or
-                # their corresponding B tag.
-                if i != j and label[0] == 'I' and not previous_label == 'B' + label[1:]:
-                    transition_matrix[i, j] = float('-inf')
-        return transition_matrix

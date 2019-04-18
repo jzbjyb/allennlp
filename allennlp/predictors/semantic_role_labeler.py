@@ -263,6 +263,7 @@ class SemanticRoleLabelerPredictor(Predictor):
                 return_dicts[sentence_index]["words"] = words
                 return_dicts[sentence_index]["verbs"].append({
                         "verb": output["verb"],
+                        'verb_inds': output['verb_inds'],
                         "description": description,
                         "tags": tags,
                 })

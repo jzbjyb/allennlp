@@ -157,20 +157,20 @@ if __name__ == '__main__':
                         action='store_true')
     parser.add_argument('--keep_ext_prob', help='whether to keep only the probability involved in the extraction',
                         action='store_true')
-    parser.add_argument('--method', type=str, default='model', choices=['openie', 'srl'])
+    parser.add_argument('--method', type=str, default='openie', choices=['openie', 'srl', 'xsrl'])
     args = parser.parse_args()
 
     import_submodules('multitask')
 
-    if args.method == 'model':
+    if args.method == 'openie':
         # directly use openie model
         arc = load_archive(args.model, cuda_device=args.cuda_device)
         predictor = Predictor.from_archive(arc, predictor_name='open-information-extraction')
         sents_tokens = read_raw_sents(args.inp, format='raw')
         preds = predictor.predict_batch(sents_tokens, batch_size=256, warm_up=3,
                                         beam_search=args.beam_search)
-    elif args.method == 'srl':
-        # first do srl then retag
+    elif args.method == 'srl' or args.method == 'xsrl':
+        # first do srl
         # two models are required in this case: srl model and retagging model
         srl_model, retag_model = args.model.split(':')
         # srl prediction
@@ -180,9 +180,16 @@ if __name__ == '__main__':
         srl_pred = srl_predictor.predict_batch_json(sents_json, batch_size=256, tokenized=True)
         # openie prediction
         retag_arc = load_archive(retag_model, cuda_device=args.cuda_device)
-        retag_predictor = Predictor.from_archive(retag_arc, predictor_name='sentence-tagger')
-        retag_input: List[List[str]] = [verb['tags'] for sent in srl_pred for verb in sent['verbs']]
-        retag_pred = retag_predictor.predict_batch_tokenized(retag_input, batch_size=256)
+        if args.method == 'srl':  # only use srl to retag
+            retag_predictor = Predictor.from_archive(retag_arc, predictor_name='sentence-tagger')
+            retag_input: List[List[str]] = [verb['tags'] for sent in srl_pred for verb in sent['verbs']]
+            retag_pred = retag_predictor.predict_batch_tokenized(retag_input, batch_size=256)
+        elif args.method == 'xsrl':  # use both x and srl to retag
+            retag_predictor = Predictor.from_archive(retag_arc, predictor_name='srl-oie-retag')
+            retag_input: List[JsonDict] = [
+                {'tokens': sent['words'], 'verb_inds': verb['verb_inds'], 'srl_tags': verb['tags']}
+                for sent in srl_pred for verb in sent['verbs']]
+            retag_pred = retag_predictor.predict_batch_tokenized(retag_input, batch_size=80)
         ind = 0
         for sent in srl_pred:
             for verb in sent['verbs']:
