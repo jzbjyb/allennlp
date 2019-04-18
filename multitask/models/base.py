@@ -3,11 +3,21 @@ from overrides import overrides
 
 import torch
 
+from allennlp.data import Vocabulary
 from allennlp.models.model import Model
+from allennlp.nn import RegularizerApplicator
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 
 
 class BaseModel(Model):
+    def __init__(self,
+                 decode_namespace: str,
+                 vocab: Vocabulary,
+                 regularizer: RegularizerApplicator = None) -> None:
+        super(BaseModel, self).__init__(vocab, regularizer)
+        self._decode_namespace = decode_namespace
+
+
     def get_decode_pseudo_class_prob(self, output_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         '''
         Use decode to get tag results used in test-time and get their pseudo class probability.
@@ -27,29 +37,29 @@ class BaseModel(Model):
         constraint simply specifies that the output tags must be a valid BIO sequence.  We add a
         ``"tags"`` key to the dictionary with the result.
         """
+        # crf
         if self.use_crf:
             # TODO: add prob
             output_dict['tags'] = [
                 [self.vocab.get_token_from_index(tag, namespace='labels') for tag in instance_tags]
-                for instance_tags in output_dict["tags"]]
+                for instance_tags in output_dict['tags']]
             return output_dict
-        all_predictions = output_dict['class_probabilities']
-        sequence_lengths = get_lengths_from_binary_sequence_mask(output_dict["mask"]).data.tolist()
 
-        if all_predictions.dim() == 3:
-            predictions_list = [all_predictions[i].detach().cpu() for i in range(all_predictions.size(0))]
+        # independent prediction
+        cp = output_dict['class_probabilities']
+        seq_len = get_lengths_from_binary_sequence_mask(output_dict['mask']).data.tolist()
+        if cp.dim() == 3:
+            cp_list = [cp[i].detach().cpu() for i in range(cp.size(0))]
         else:
-            predictions_list = [all_predictions]
+            cp_list = [cp]
         all_tags_ind, all_tags, all_probs = [], [], []
-        transition_matrix = self.get_viterbi_pairwise_potentials()
-        for predictions, length in zip(predictions_list, sequence_lengths):
-            lp = torch.log(predictions[:length])  # log prob is required by viterbi decoding
-            max_likelihood_sequence, score = viterbi_decode(lp, transition_matrix)
-            tags = [self.vocab.get_token_from_index(x, namespace='MT_gt_labels')
-                    for x in max_likelihood_sequence]  # TODO: add more task and avoid "gt"
-            probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
-                     for i in range(len(max_likelihood_sequence))]
-            all_tags_ind.append(max_likelihood_sequence)
+        trans_mat = self.get_viterbi_pairwise_potentials()
+        for cp, length in zip(cp_list, seq_len):
+            lp = torch.log(cp[:length] + 1e-10)  # log prob is required by viterbi decoding
+            best_seq, score = viterbi_decode(lp, trans_mat)
+            tags = [self.vocab.get_token_from_index(x, namespace=self._decode_namespace) for x in best_seq]
+            probs = [cp[i, best_seq[i]].numpy().tolist() for i in range(len(best_seq))]
+            all_tags_ind.append(best_seq)
             all_tags.append(tags)
             all_probs.append(probs)
         output_dict['tags_ind'] = all_tags_ind
@@ -71,8 +81,7 @@ class BaseModel(Model):
         transition_matrix : torch.Tensor
             A (num_labels, num_labels) matrix of pairwise potentials.
         """
-        # TODO: add more task and avoid "gt"
-        all_labels = self.vocab.get_index_to_token_vocabulary('MT_gt_labels')
+        all_labels = self.vocab.get_index_to_token_vocabulary(self._decode_namespace)
         num_labels = len(all_labels)
         transition_matrix = torch.zeros([num_labels, num_labels])
 

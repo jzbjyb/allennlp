@@ -69,7 +69,8 @@ class SemanticRoleLabelerMultiTask(BaseModel):
                  # which is more consistent with test-time performance.
                  decode_span_metric: bool = False,
                  use_crf: bool = False) -> None:
-        super(SemanticRoleLabelerMultiTask, self).__init__(vocab, regularizer)
+        # TODO: avoid "gt"
+        super(SemanticRoleLabelerMultiTask, self).__init__('MT_gt_labels', vocab, regularizer)
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
         self.decode_span_metric = decode_span_metric

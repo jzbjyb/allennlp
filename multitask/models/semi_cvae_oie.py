@@ -88,7 +88,8 @@ class SemiConditionalVAEOIE(BaseModel):
                  # which is more consistent with test-time performance.
                  decode_span_metric: bool = False,
                  use_crf: bool = False) -> None:
-        super(SemiConditionalVAEOIE, self).__init__(vocab, regularizer)
+        # TODO: avoid "gt"
+        super(SemiConditionalVAEOIE, self).__init__('MT_gt_labels', vocab, regularizer)
         self._y1_ns = y1_ns
         self._y2_ns = y2_ns
         # label namespace for y1 and y2
