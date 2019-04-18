@@ -17,8 +17,9 @@
     "y1_ns": "gt",
     "y2_ns": "srl",
     "sample_num": 5,
-    "sample_algo": "random",
-    "infer_algo": "gumbel_softmax",
+    "sample_algo": "beam",
+    "infer_algo": "reinforce",
+    "clip_reward": 10.0,
     "temperature": 1.0,
     "decode_method": "all",
     "beta": 1.0,
@@ -44,8 +45,8 @@
     "encoder": {
       "type": "alternating_lstm",
       "input_size": 1188,
-      "hidden_size": 64,
-      "num_layers": 2,
+      "hidden_size": 300,
+      "num_layers": 8,
       "recurrent_dropout_probability": 0.1,
       "use_input_projection_bias": false
     },
@@ -106,7 +107,7 @@
         "^(decoder.*|dec_y2_proj.*|y1_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xoie_srl_vocab/best.th",
+          "weights_file_path": "output/openie/retag/small_xoie_srl_vocab_srl_official/best.th",
           "parameter_name_overrides": {
             "y1_embedding.weight": "tag_feature_embedding.weight",
             "decoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
@@ -124,15 +125,9 @@
         "^(encoder.*|enc_y1_proj.*|y2_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xsrl_oie_vocab/best.th",
+          "weights_file_path": "output/openie/retag/small_xsrl_oie_vocab_srl_official_large/best.th",
           "parameter_name_overrides": {
             "y2_embedding.weight": "tag_feature_embedding.weight",
-            "encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
-            "encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_0.state_linearity.weight",
-            "encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_0.state_linearity.bias",
-            "encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_1.input_linearity.weight",
-            "encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_1.state_linearity.weight",
-            "encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_1.state_linearity.bias",
             "enc_y1_proj._module.weight": "tag_projection_layer._module.weight",
             "enc_y1_proj._module.bias": "tag_projection_layer._module.bias"
           }
