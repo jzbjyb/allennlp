@@ -210,15 +210,14 @@ class SemiConditionalVAEOIE(BaseModel):
 
 
     def vae_encode(self,
-                   x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, emb_size)
+                   t_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, t_emb_size)
+                   v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    beam_size: int = 1):
         ''' x,y2 -> y1 '''
         y2_emb = self.y2_embedding(y2)
-        # concat_emb must be concatenated by the order of word, verb, y2
-        concat_emb = torch.cat([x_emb, y2_emb], -1)
-        enc = self.encoder(concat_emb, mask)
+        enc = self.encoder(t_emb, v_emb, y2_emb, mask)
         logits = self.enc_y1_proj(enc)
 
         if self._sample_algo == 'random':  # random sample from categorical distribution
@@ -243,9 +242,9 @@ class SemiConditionalVAEOIE(BaseModel):
             logits, y1[i], mask, average=None) for i in range(beam_size)])
 
         if self._infer_algo == 'reinforce':
-            return x_emb, y2, y1, None, y1_nll
+            return y1, None, y1_nll
         elif self._infer_algo == 'gumbel_softmax':
-            return x_emb, y2, y1, y1_oh, y1_nll
+            return y1, y1_oh, y1_nll
 
 
     def vae_decode(self,
@@ -378,8 +377,8 @@ class SemiConditionalVAEOIE(BaseModel):
             # SHAPE: _, _, (beam_size, batch_size, seq_len),
             # (beam_size, batch_size, seq_len, num_class),
             # (beam_size, batch_size)
-            _, _, unsup_y1, unsup_y1_oh, enc_y1_nll = \
-                self.vae_encode(unsup_x, unsup_y2, unsup_mask, beam_size=self._sample_num)
+            unsup_y1, unsup_y1_oh, enc_y1_nll = \
+                self.vae_encode(unsup_t, unsup_v, unsup_y2, unsup_mask, beam_size=self._sample_num)
 
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
