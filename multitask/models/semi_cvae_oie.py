@@ -144,10 +144,6 @@ class SemiConditionalVAEOIE(BaseModel):
         # encoder p(y1|x, y2)
         self.y2_embedding = Embedding(self._y2_num_class, y_feature_dim)
         self.encoder = encoder
-        check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim + y_feature_dim,
-                               encoder.get_input_dim(),
-                               'text emb dim + verb indicator emb dim + y2 emb dim',
-                               'encoder input dim')
         self.enc_y1_proj = TimeDistributed(Linear(encoder.get_output_dim(), self._y1_num_class))
         # encoder reward estimation
         if self._baseline == 'wb':
