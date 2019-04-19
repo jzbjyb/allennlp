@@ -18,7 +18,7 @@ class SrlOieRetagPredictor(Predictor):
                                 inputs: List[JsonDict],
                                 batch_size: int = 256) -> List[JsonDict]:
         # collect instance
-        inp_tags_name = '{}_tags'.format(self._model.y1)
+        inp_tags_name = '{}_tags'.format(self._model.yin)
         insts = []
         for inp in inputs:
             tokens: List[str] = inp['tokens']
