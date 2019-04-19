@@ -106,7 +106,7 @@
         "^(decoder.*|dec_y2_proj.*|y1_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xoie_srl_vocab_srl_official/best.th",
+          "weights_file_path": "output/openie/retag/small_xoie_srl_srl_official/best.th",
           "parameter_name_overrides": {
             "y1_embedding.weight": "tag_feature_embedding.weight",
             "decoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
@@ -124,7 +124,7 @@
         "^(encoder.*|enc_y1_proj.*|y2_embedding.*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/small_xsrl_oie_vocab_srl_official/best.th",
+          "weights_file_path": "output/openie/retag/small_xsrl_oie_srl_official/best.th",
           "parameter_name_overrides": {
             "y2_embedding.weight": "tag_feature_embedding.weight",
             "encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
