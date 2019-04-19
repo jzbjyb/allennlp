@@ -80,6 +80,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  word_dropout: float = 0.0,  # dropout a word
                  word_proj_dim: int = None,  # the dim of projection of word embedding
                  binary_feature_dim_decoder: int = None,  # binary emb used in decoder
+                 unsup_loss_type: str = 'all',  # how to compute unsupervised loss
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -117,6 +118,8 @@ class SemiConditionalVAEOIE(BaseModel):
         self._decode_method = decode_method
         assert beta >= 0, 'alpha should be non-negative'
         self._beta = beta
+        assert unsup_loss_type in {'all', 'only_disc'}, 'unsup_loss_type not supported'
+        self._unsup_loss_type = unsup_loss_type
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
         self.decode_span_metric = decode_span_metric
@@ -425,7 +428,10 @@ class SemiConditionalVAEOIE(BaseModel):
                 decoder_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 discriminator_loss = (self._beta * dis_y1_nll.mean(0) * unsup_weight).sum() # be mindful of the beta
                 baseline_loss = (baseline_loss.mean(0) * unsup_weight).sum()
-                sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
+                if self._unsup_loss_type == 'all':
+                    sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
+                elif self._unsup_loss_type == 'only_disc':
+                    sup_unsup_loss += discriminator_loss
                 self.y1_multi_loss('enc_l', encoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
