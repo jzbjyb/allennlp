@@ -66,6 +66,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  decoder: Seq2SeqEncoder, # p(y2|x, y1) or p(y2|y1)
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
+                 kl_method: str = 'sample',  # whether to use sample to approximate kl or calculate exactly
                  sample_num: int = 1, # number of samples generated from encoder
                  sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
@@ -102,12 +103,19 @@ class SemiConditionalVAEOIE(BaseModel):
         # num_class for y1 and y2
         self._y1_num_class = self.vocab.get_vocab_size(self._y1_label_ns)
         self._y2_num_class = self.vocab.get_vocab_size(self._y2_label_ns)
+        assert kl_method in {'sample', 'exact'}
+        self._kl_method = kl_method
         assert sample_num > 0, 'sample_num should be a positive integer'
         self._sample_num = sample_num
         assert sample_algo in {'beam', 'random'}, 'sample_algo not supported'
         self._sample_algo = sample_algo
         assert infer_algo in {'reinforce', 'gumbel_softmax'}, 'infer_algo not supported'
         self._infer_algo = infer_algo
+        if infer_algo == 'gumbel_softmax' and kl_method == 'sample':
+            # gumbel softmax with sampled kl divergence is tricky.
+            # the grad of cross entropy loss in q(y1|x, y2) and p(y1|x) need to be bp to both logits and targets.
+            # TODO: gumbel softmax with sampled kl
+            raise NotImplementedError
         assert baseline in {'wb', 'mean'}, 'baseline not supported'
         self._baseline = baseline
         if clip_reward is not None:
@@ -241,9 +249,9 @@ class SemiConditionalVAEOIE(BaseModel):
             logits, y1[i], mask, average=None) for i in range(beam_size)])
 
         if self._infer_algo == 'reinforce':
-            return y1, None, y1_nll
+            return logits, y1, None, y1_nll
         elif self._infer_algo == 'gumbel_softmax':
-            return y1, y1_oh, y1_nll
+            return logits, y1, y1_oh, y1_nll
 
 
     def vae_decode(self,
@@ -313,6 +321,18 @@ class SemiConditionalVAEOIE(BaseModel):
         return logits, cp, None
 
 
+    def exact_kl_div(self,
+                     q_logits: torch.Tensor,  # logits of posterior, SHAPE: (batch_size, seq_len, num_class)
+                     p_logits: torch.Tensor,  # logits of prior, SHAPE: (batch_size, seq_len, num_class)
+                     ) -> torch.Tensor:  # SHAPE: (batch_size)
+        log_p = F.log_softmax(p_logits, dim=-1)
+        q = F.softmax(q_logits, dim=-1)
+        if self._unsup_loss_type == 'only_disc':
+            q = q.detach()
+        kl = F.kl_div(log_p, q, reduction='none')
+        return kl.sum((1, 2))
+
+
     def forward(self,  # type: ignore
                 tokens: Dict[str, torch.LongTensor],
                 verb_indicator: torch.LongTensor,
@@ -376,7 +396,7 @@ class SemiConditionalVAEOIE(BaseModel):
             # SHAPE: _, _, (beam_size, batch_size, seq_len),
             # (beam_size, batch_size, seq_len, num_class),
             # (beam_size, batch_size)
-            unsup_y1, unsup_y1_oh, enc_y1_nll = \
+            enc_logits, unsup_y1, unsup_y1_oh, enc_y1_nll = \
                 self.vae_encode(unsup_t, unsup_v, unsup_y2, unsup_mask, beam_size=self._sample_num)
 
             # decoder loss (reconstruction loss)
@@ -390,19 +410,29 @@ class SemiConditionalVAEOIE(BaseModel):
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)
-            _, _, dis_y1_nll = self.vae_discriminate(unsup_x, unsup_mask, unsup_y1)  # prior
+            disc_logits, _, disc_y1_nll = self.vae_discriminate(unsup_x, unsup_mask, unsup_y1)  # prior
 
             # kl divergence
-            # SHAPE: (beam_size, batch_size)
-            kl = self._beta * (dis_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
+            if self._kl_method == 'sample':
+                # SHAPE: (beam_size, batch_size)
+                kl = self._beta * (disc_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
+            elif self._kl_method == 'exact':
+                # beta * \sum_{y1} {log(q(y1|x,y2) / p(y1|x))}
+                kl = self._beta * self.exact_kl_div(enc_logits, disc_logits)
+                # SHAPE: (1, batch_size)
+                kl = kl.unsqueeze(0)
 
             # encoder loss
             # only REINFORCE needs manually calculate encoder loss,
             # while gumbel_softmax could directly do bp
             if self._infer_algo == 'reinforce':
-                # SHAPE: (beam_size, batch_size)
-                encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
-                encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
+                if self._kl_method == 'sample':
+                    # SHAPE: (beam_size, batch_size)
+                    encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
+                    encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
+                elif self._kl_method == 'exact':
+                    encoder_reward = -y2_nll  # log(p(y2|y1)
+                    encoder_reward = encoder_reward.detach()
                 # reduce variance
                 if self._baseline == 'wb':
                     baseline = encoder_reward.mean(0, keepdim=True) * self.w + self.b
@@ -422,16 +452,26 @@ class SemiConditionalVAEOIE(BaseModel):
             if self._infer_algo == 'reinforce':
                 encoder_loss = (y1_nll_with_reward.mean(0) * unsup_weight).sum()
                 decoder_loss = (y2_nll.mean(0) * unsup_weight).sum()
-                discriminator_loss = (self._beta * dis_y1_nll.mean(0) * unsup_weight).sum() # be mindful of the beta
                 baseline_loss = (baseline_loss.mean(0) * unsup_weight).sum()
-                if self._unsup_loss_type == 'all':
-                    sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
-                elif self._unsup_loss_type == 'only_disc':
-                    sup_unsup_loss += discriminator_loss
                 self.y1_multi_loss('enc_l', encoder_loss.item(), count=unsup_num)
                 self.y1_multi_loss('dec_l', decoder_loss.item(), count=unsup_num)
-                self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
                 self.y1_multi_loss('base_l', baseline_loss.item(), count=unsup_num)
+                if self._kl_method == 'sample':
+                    # be mindful of the beta
+                    discriminator_loss = (self._beta * disc_y1_nll.mean(0) * unsup_weight).sum()
+                    if self._unsup_loss_type == 'all':
+                        sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
+                    elif self._unsup_loss_type == 'only_disc':
+                        sup_unsup_loss += discriminator_loss
+                    self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
+                elif self._kl_method == 'exact':
+                    # part of the encoder loss and all of the discriminator loss
+                    kl_loss = (kl.mean(0) * unsup_weight).sum()
+                    if self._unsup_loss_type == 'all':
+                        sup_unsup_loss += decoder_loss + encoder_loss + kl_loss + baseline_loss
+                    elif self._unsup_loss_type == 'only_disc':
+                        sup_unsup_loss += kl_loss
+                    self.y1_multi_loss('disc_l', kl_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
                 recon_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 kl_loss = (kl.mean(0) * unsup_weight).sum()
