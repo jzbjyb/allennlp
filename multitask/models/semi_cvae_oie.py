@@ -20,7 +20,19 @@ from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
 from multitask.metrics import MultipleLoss
+from multitask.modules import PostElmo
 from .base import BaseModel
+
+
+def masked_select_dict_on_first_dim(dicts: Dict[str, torch.Tensor], mask: torch.Tensor):
+    result = {}
+    for k in dicts:
+        os = dicts[k].size()[1:]  # original shape except for the first dim
+        ns = [1] * len(dicts[k].size())
+        ns[0] = -1
+        kmask = mask.view(ns)  # reshape mask to make it have the same dimensions as the tensor
+        result[k] = dicts[k].masked_select(kmask).view((-1,) + os)
+    return result
 
 
 def sample_gumbel(shape, eps=1e-20):
@@ -132,16 +144,44 @@ class SemiConditionalVAEOIE(BaseModel):
         self.ignore_span_metric = ignore_span_metric
         self.decode_span_metric = decode_span_metric
         self.use_crf = use_crf  # TODO: add crf
+        self._use_post_elmo = False
+        if hasattr(text_field_embedder, 'token_embedder_elmo'):
+            elmo_token_embedder = getattr(text_field_embedder, 'token_embedder_elmo')
+            if elmo_token_embedder.get_use_post_elmo():
+                self._use_post_elmo = True
         # use for sampling process at training time
         self.register_buffer('_pairwise_potential', self.get_viterbi_pairwise_potentials())
 
         # dropout
-        self.embedding_dropout = Dropout(p=embedding_dropout)
+        self.embedding_dropout = Dropout(p=embedding_dropout)  # TODO: where to do emb dropout?
         self.word_dropout = Dropout2d(p=word_dropout)
 
-        # discriminator p(y1|x)
+        # text field embedder (handle elmo)
         self.text_field_embedder = text_field_embedder
-        self.binary_feature_embedding = Embedding(2, binary_feature_dim)
+        if self._use_post_elmo:
+            # use separate elmo scalars
+            self.disc_post_elmo_ = PostElmo(**elmo_token_embedder.get_post_elmo_params())
+            self.enc_post_elmo_ = PostElmo(**elmo_token_embedder.get_post_elmo_params())
+            self.dec_post_elmo_ = PostElmo(**elmo_token_embedder.get_post_elmo_params())
+            self.disc_post_elmo = lambda x: self.disc_post_elmo_(**x)
+            self.enc_post_elmo = lambda x: self.enc_post_elmo_(**x)
+            self.dec_post_elmo = lambda x: self.dec_post_elmo_(**x)
+            # use separate binary embeddings
+            self.disc_bin_emb = Embedding(2, binary_feature_dim)
+            self.enc_bin_emb = Embedding(2, binary_feature_dim)
+            self.dec_bin_emb = Embedding(2, binary_feature_dim)
+        else:
+            # use the same elmo scalars
+            self.disc_post_elmo = lambda x: x
+            self.enc_post_elmo = lambda x: x
+            self.dec_post_elmo = lambda x: x
+            # use the same binary embedding
+            self.binary_feature_embedding = Embedding(2, binary_feature_dim)
+            self.disc_bin_emb = self.binary_feature_embedding
+            self.enc_bin_emb = self.disc_bin_emb
+            self.dec_bin_emb = self.disc_bin_emb
+
+        # discriminator p(y1|x)
         self.discriminator = discriminator
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                discriminator.get_input_dim(),
@@ -171,7 +211,7 @@ class SemiConditionalVAEOIE(BaseModel):
                 x_dim = text_field_embedder.get_output_dim()
             self._binary_feature_dim_decoder = binary_feature_dim_decoder
             if binary_feature_dim_decoder:
-                self.binary_feature_embedding_decoder = Embedding(2, binary_feature_dim_decoder)
+                self.binary_feature_embedding_decoder = Embedding(2, binary_feature_dim_decoder)  # TODO: integrate
                 x_dim += binary_feature_dim_decoder
             else:
                 x_dim += binary_feature_dim
@@ -242,7 +282,6 @@ class SemiConditionalVAEOIE(BaseModel):
                 # TODO: gumbel softmax for beam search?
                 raise NotImplementedError
 
-        # TODO: the sequence_cross_entropy_with_logits an average across tokens
         # SHAPE: (beam_size, batch_size)
         y1.requires_grad = False
         y1_nll = torch.stack([sequence_cross_entropy_with_logits(
@@ -255,7 +294,6 @@ class SemiConditionalVAEOIE(BaseModel):
 
 
     def vae_decode(self,
-                   x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, x_emb_size)
                    t_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, t_emb_size)
                    v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
                    # SHAPE: (beam_size, batch_size, seq_len) or (beam_size, batch_size, seq_len, num_class)
@@ -297,11 +335,12 @@ class SemiConditionalVAEOIE(BaseModel):
 
 
     def vae_discriminate(self,
-                         x_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, emb_size)
+                         t_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, t_emb_size)
+                         v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
                          mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                          y1: torch.LongTensor = None):  # SHAPE: (beam_size, batch_size, seq_len)
         ''' x -> y1 '''
-        enc = self.discriminator(x_emb, mask)
+        enc = self.discriminator(torch.cat([t_emb, v_emb], -1), mask)
         logits = self.disc_y1_proj(enc)
         cp = F.softmax(logits, dim=-1)
 
@@ -342,29 +381,32 @@ class SemiConditionalVAEOIE(BaseModel):
                 tags: torch.LongTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
         output_dict = {}
-
-        # emb text
-        text_emb = self.embedding_dropout(self.text_field_embedder(tokens))
-        verb_emb = self.binary_feature_embedding(verb_indicator.long())
-        concat_emb = torch.cat([text_emb, verb_emb], -1)
-        bs, sl, es = concat_emb.size()
-        _, _, tes = text_emb.size()
-        _, _, ves = verb_emb.size()
+        bs, sl = verb_indicator.size()
         mask = get_text_field_mask(tokens)
+
+        # tokens embedder (a wrapper)
+        if self._use_post_elmo:
+            # produce an intermediate result
+            tokens_embber = lambda x: getattr(self.text_field_embedder, 'token_embedder_elmo')(x['elmo'])
+        else:
+            tokens_embber = lambda x: self.text_field_embedder(x)
 
         sup_unsup_loss = 0.0
 
         # supervised
         sup_tm = task_labels.eq(self._y1_ind)
         if sup_tm.sum().item() > 0:  # skip if no supervised data exists
-            sup_x = concat_emb.masked_select(sup_tm.view(-1, 1, 1)).view(-1, sl, es)
+            sup_tokens = masked_select_dict_on_first_dim(tokens, sup_tm)
+            sup_t = tokens_embber(sup_tokens)
+            sup_verb = verb_indicator.masked_select(sup_tm.view(-1, 1)).view(-1, sl)
             sup_mask = mask.masked_select(sup_tm.view(-1, 1)).view(-1, sl)
             sup_weight = weight.masked_select(sup_tm)
             sup_num = (sup_mask.sum(1) > 0).int().sum().item()
             sup_y1 = None
             if tags is not None:
                 sup_y1 = tags.masked_select(sup_tm.view(-1, 1)).view(-1, sl)
-            sup_y1_logits, sup_y1_cp, sup_y1_nll = self.vae_discriminate(sup_x, sup_mask, sup_y1)
+            sup_y1_logits, sup_y1_cp, sup_y1_nll = self.vae_discriminate(
+                self.disc_post_elmo(sup_t), self.disc_bin_emb(sup_verb), sup_mask, sup_y1)
             output_dict['logits'] = sup_y1_logits
             output_dict['class_probabilities'] = sup_y1_cp
             output_dict['mask'] = sup_mask
@@ -384,10 +426,9 @@ class SemiConditionalVAEOIE(BaseModel):
         # unsupervised
         unsup_tm = task_labels.eq(self._y2_ind)
         if unsup_tm.sum().item() > 0 and tags is not None: # skip if no unsupervised data exists
-            unsup_x = concat_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, es)
-            unsup_t = text_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, tes)  # used in decoder
-            unsup_v = verb_emb.masked_select(unsup_tm.view(-1, 1, 1)).view(-1, sl, ves)  # used in decoder
-            unsup_verb = verb_indicator.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)  # used in decoder
+            unsup_tokens = masked_select_dict_on_first_dim(tokens, unsup_tm)
+            unsup_t = tokens_embber(unsup_tokens)
+            unsup_verb = verb_indicator.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_y2 = tags.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_mask = mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_weight = weight.masked_select(unsup_tm)
@@ -398,20 +439,25 @@ class SemiConditionalVAEOIE(BaseModel):
             # (beam_size, batch_size, seq_len, num_class),
             # (beam_size, batch_size)
             enc_logits, unsup_y1, unsup_y1_oh, enc_y1_nll = \
-                self.vae_encode(unsup_t, unsup_v, unsup_y2, unsup_mask, beam_size=self._sample_num)
+                self.vae_encode(self.enc_post_elmo(unsup_t),
+                                self.enc_bin_emb(unsup_verb),
+                                unsup_y2, unsup_mask, beam_size=self._sample_num)
 
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
-            if self._binary_feature_dim_decoder:
-                unsup_v = self.binary_feature_embedding_decoder(unsup_verb.long())
             if self._infer_algo == 'reinforce':
-                y2_nll = self.vae_decode(unsup_x, unsup_t, unsup_v, unsup_y1, unsup_y2, unsup_mask)
+                y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
+                                         self.dec_bin_emb(unsup_verb),
+                                         unsup_y1, unsup_y2, unsup_mask)
             elif self._infer_algo == 'gumbel_softmax':
-                y2_nll = self.vae_decode(unsup_x, unsup_t, unsup_v, unsup_y1_oh, unsup_y2, unsup_mask)
+                y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
+                                         self.dec_bin_emb(unsup_verb),
+                                         unsup_y1_oh, unsup_y2, unsup_mask)
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)
-            disc_logits, _, disc_y1_nll = self.vae_discriminate(unsup_x, unsup_mask, unsup_y1)  # prior
+            disc_logits, _, disc_y1_nll = self.vae_discriminate(
+                self.disc_post_elmo(unsup_t), self.disc_bin_emb(unsup_verb), unsup_mask, unsup_y1)  # prior
 
             # kl divergence
             if self._kl_method == 'sample':

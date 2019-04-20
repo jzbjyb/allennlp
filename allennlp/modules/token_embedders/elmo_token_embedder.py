@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any, Dict
 import torch
 
 from allennlp.common import Params
@@ -53,9 +53,11 @@ class ElmoTokenEmbedder(TokenEmbedder):
                  projection_dim: int = None,
                  vocab_to_cache: List[str] = None,
                  scalar_mix_parameters: List[float] = None,
-                 stateful: bool = True) -> None:
+                 stateful: bool = True,
+                 use_post_elmo: bool = False) -> None:
         super(ElmoTokenEmbedder, self).__init__()
 
+        self._use_post_elmo = use_post_elmo
         self._elmo = Elmo(options_file,
                           weight_file,
                           1,
@@ -64,16 +66,36 @@ class ElmoTokenEmbedder(TokenEmbedder):
                           requires_grad=requires_grad,
                           vocab_to_cache=vocab_to_cache,
                           scalar_mix_parameters=scalar_mix_parameters,
-                          stateful=stateful)
-        if projection_dim:
-            self._projection = torch.nn.Linear(self._elmo.get_output_dim(), projection_dim)
-            self.output_dim = projection_dim
-        else:
-            self._projection = None
+                          stateful=stateful,
+                          use_post_elmo=use_post_elmo)
+        if use_post_elmo:
             self.output_dim = self._elmo.get_output_dim()
+            self._post_elmo_params = {
+                "pre_elmo_output_dim": self.output_dim,
+                "pre_elmo_num_layers": self._elmo._elmo_lstm.num_layers,
+                "num_output_representations": 1,
+                "do_layer_norm": do_layer_norm,
+                "dropout": dropout,
+                "keep_sentence_boundaries": False,
+                "scalar_mix_parameters": scalar_mix_parameters,
+                "projection_dim": projection_dim,
+            }
+        else:
+            if projection_dim:
+                self._projection = torch.nn.Linear(self._elmo.get_output_dim(), projection_dim)
+                self.output_dim = projection_dim
+            else:
+                self._projection = None
+                self.output_dim = self._elmo.get_output_dim()
 
     def get_output_dim(self) -> int:
         return self.output_dim
+
+    def get_use_post_elmo(self) -> bool:
+        return self._use_post_elmo
+
+    def get_post_elmo_params(self) -> Dict[str, Any]:
+        return self._post_elmo_params
 
     def forward(self, # pylint: disable=arguments-differ
                 inputs: torch.Tensor,
@@ -93,6 +115,8 @@ class ElmoTokenEmbedder(TokenEmbedder):
         ``(batch_size, timesteps, embedding_dim)``
         """
         elmo_output = self._elmo(inputs, word_inputs)
+        if self._use_post_elmo:  # return intermediate results
+            return elmo_output
         elmo_representations = elmo_output['elmo_representations'][0]
         if self._projection:
             projection = self._projection
@@ -120,6 +144,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
         projection_dim = params.pop_int("projection_dim", None)
         scalar_mix_parameters = params.pop('scalar_mix_parameters', None)
         stateful = params.pop('stateful', True)
+        use_post_elmo = params.pop("use_post_elmo", False)
         params.assert_empty(cls.__name__)
         return cls(options_file=options_file,
                    weight_file=weight_file,
@@ -129,4 +154,5 @@ class ElmoTokenEmbedder(TokenEmbedder):
                    projection_dim=projection_dim,
                    vocab_to_cache=vocab_to_cache,
                    scalar_mix_parameters=scalar_mix_parameters,
-                   stateful=stateful)
+                   stateful=stateful,
+                   use_post_elmo=use_post_elmo)

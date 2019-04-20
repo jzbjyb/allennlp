@@ -95,7 +95,8 @@ class Elmo(torch.nn.Module):
                  keep_sentence_boundaries: bool = False,
                  scalar_mix_parameters: List[float] = None,
                  module: torch.nn.Module = None,
-                 stateful: bool = True) -> None:
+                 stateful: bool = True,
+                 use_post_elmo: bool = False) -> None:
         super(Elmo, self).__init__()
 
         logger.info("Initializing ELMo")
@@ -110,18 +111,20 @@ class Elmo(torch.nn.Module):
                                         requires_grad=requires_grad,
                                         vocab_to_cache=vocab_to_cache,
                                         stateful=stateful)
-        self._has_cached_vocab = vocab_to_cache is not None
-        self._keep_sentence_boundaries = keep_sentence_boundaries
-        self._dropout = Dropout(p=dropout)
-        self._scalar_mixes: Any = []
-        for k in range(num_output_representations):
-            scalar_mix = ScalarMix(
-                    self._elmo_lstm.num_layers,
-                    do_layer_norm=do_layer_norm,
-                    initial_scalar_parameters=scalar_mix_parameters,
-                    trainable=scalar_mix_parameters is None)
-            self.add_module('scalar_mix_{}'.format(k), scalar_mix)
-            self._scalar_mixes.append(scalar_mix)
+        self._use_post_elmo = use_post_elmo
+        if not use_post_elmo:
+            self._has_cached_vocab = vocab_to_cache is not None
+            self._keep_sentence_boundaries = keep_sentence_boundaries
+            self._dropout = Dropout(p=dropout)
+            self._scalar_mixes: Any = []
+            for k in range(num_output_representations):
+                scalar_mix = ScalarMix(
+                        self._elmo_lstm.num_layers,
+                        do_layer_norm=do_layer_norm,
+                        initial_scalar_parameters=scalar_mix_parameters,
+                        trainable=scalar_mix_parameters is None)
+                self.add_module('scalar_mix_{}'.format(k), scalar_mix)
+                self._scalar_mixes.append(scalar_mix)
 
     def get_output_dim(self):
         return self._elmo_lstm.get_output_dim()
@@ -172,6 +175,14 @@ class Elmo(torch.nn.Module):
         layer_activations = bilm_output['activations']
         mask_with_bos_eos = bilm_output['mask']
 
+        if self._use_post_elmo:  # return intermediate results
+            return {
+                'layer_activations': layer_activations,
+                'mask_with_bos_eos': mask_with_bos_eos,
+                'original_shape': original_shape,
+                'word_inputs': word_inputs
+            }
+
         # compute the elmo representations
         representations = []
         for i in range(len(self._scalar_mixes)):
@@ -217,6 +228,7 @@ class Elmo(torch.nn.Module):
         keep_sentence_boundaries = params.pop_bool('keep_sentence_boundaries', False)
         dropout = params.pop_float('dropout', 0.5)
         scalar_mix_parameters = params.pop('scalar_mix_parameters', None)
+        use_post_elmo = params.pop('use_post_elmo', None)
         params.assert_empty(cls.__name__)
 
         return cls(options_file=options_file,
@@ -226,7 +238,8 @@ class Elmo(torch.nn.Module):
                    do_layer_norm=do_layer_norm,
                    keep_sentence_boundaries=keep_sentence_boundaries,
                    dropout=dropout,
-                   scalar_mix_parameters=scalar_mix_parameters)
+                   scalar_mix_parameters=scalar_mix_parameters,
+                   use_post_elmo=use_post_elmo)
 
 
 def batch_to_ids(batch: List[List[str]]) -> torch.Tensor:
