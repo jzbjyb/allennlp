@@ -324,13 +324,14 @@ class SemiConditionalVAEOIE(BaseModel):
     def exact_kl_div(self,
                      q_logits: torch.Tensor,  # logits of posterior, SHAPE: (batch_size, seq_len, num_class)
                      p_logits: torch.Tensor,  # logits of prior, SHAPE: (batch_size, seq_len, num_class)
+                     mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                      ) -> torch.Tensor:  # SHAPE: (batch_size)
         log_p = F.log_softmax(p_logits, dim=-1)
         q = F.softmax(q_logits, dim=-1)
         if self._unsup_loss_type == 'only_disc':
             q = q.detach()
         kl = F.kl_div(log_p, q, reduction='none')
-        return kl.sum((1, 2))
+        return (kl * mask.unsqueeze(-1).float()).sum((1, 2))
 
 
     def forward(self,  # type: ignore
@@ -418,7 +419,7 @@ class SemiConditionalVAEOIE(BaseModel):
                 kl = self._beta * (disc_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
             elif self._kl_method == 'exact':
                 # beta * \sum_{y1} {log(q(y1|x,y2) / p(y1|x))}
-                kl = self._beta * self.exact_kl_div(enc_logits, disc_logits)
+                kl = self._beta * self.exact_kl_div(enc_logits, disc_logits, unsup_mask)
                 # SHAPE: (1, batch_size)
                 kl = kl.unsqueeze(0)
 
