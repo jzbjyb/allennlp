@@ -64,6 +64,7 @@ class ElmoLstm(_EncoderBase):
                  memory_cell_clip_value: Optional[float] = None,
                  state_projection_clip_value: Optional[float] = None,
                  stateful: bool = True) -> None:
+        self.stateful = stateful
         super(ElmoLstm, self).__init__(stateful=stateful)
 
         # Required to be wrapped with a :class:`PytorchSeq2SeqWrapper`.
@@ -152,7 +153,8 @@ class ElmoLstm(_EncoderBase):
                                                       stacked_sequence_output[0].size(-1))
             stacked_sequence_output = torch.cat([stacked_sequence_output, zeros], 2)
 
-        self._update_states(final_states, restoration_indices)
+        if self.stateful:
+            self._update_states(final_states, restoration_indices)
 
         # Restore the original indices and return the sequence.
         # Has shape (num_layers, batch_size, sequence_length, hidden_size)
