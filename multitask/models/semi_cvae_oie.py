@@ -246,7 +246,7 @@ class SemiConditionalVAEOIE(BaseModel):
         # SHAPE: (beam_size, batch_size)
         y1.requires_grad = False
         y1_nll = torch.stack([sequence_cross_entropy_with_logits(
-            logits, y1[i], mask, average=None) for i in range(beam_size)])
+            logits, y1[i], mask, average='sum') for i in range(beam_size)])
 
         if self._infer_algo == 'reinforce':
             return logits, y1, None, y1_nll
@@ -290,7 +290,7 @@ class SemiConditionalVAEOIE(BaseModel):
         elif self._decode_method == 'partial':
             enc = self.decoder(y1_emb, mask)
         logits = self.dec_y2_proj(enc)
-        y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average=None)
+        y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average='sum')
         # SHAPE: (beam_size, batch_size)
         y2_nll = y2_nll.view(beam_size, batch_size)
         return y2_nll
@@ -308,12 +308,12 @@ class SemiConditionalVAEOIE(BaseModel):
         if y1 is not None: # loss
             if len(y1.size()) == 2:
                 y1_nll = sequence_cross_entropy_with_logits(
-                    logits, y1, mask, average=None, label_smoothing=self._label_smoothing)
+                    logits, y1, mask, average='sum', label_smoothing=self._label_smoothing)
             elif len(y1.size()) == 3:
                 beam_size, batch_size, seq_len = y1.size()
                 # SHAPE: (beam_size, batch_size)
                 y1_nll = torch.stack([sequence_cross_entropy_with_logits(
-                    logits, y1[i], mask, average=None, label_smoothing=self._label_smoothing)
+                    logits, y1[i], mask, average='sum', label_smoothing=self._label_smoothing)
                     for i in range(beam_size)])
             else:
                 raise Exception('y1 dimension not correct')
