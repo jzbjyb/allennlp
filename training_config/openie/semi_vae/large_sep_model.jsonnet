@@ -16,6 +16,7 @@
     "type": "semi_cvae_oie",
     "y1_ns": "gt",
     "y2_ns": "srl",
+    "kl_method": "exact",
     "sample_num": 5,
     "sample_algo": "beam",
     "infer_algo": "reinforce",
@@ -32,7 +33,8 @@
         "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
         "dropout": 0.1,
-        "stateful": false
+        "stateful": false,
+        "use_post_elmo": true
       }
     },
     "discriminator": {
@@ -80,14 +82,14 @@
     "y_feature_dim": 64,
     "initializer": [
       [ // token emb and verb emb
-        "^(binary_feature_embedding.*|text_field_embedder.*)$",
+        "^(text_field_embedder\\..*)$",
         {
           "type": "pretrained",
           "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th"
         }
       ],
       [ // use pretrained model from multitask learning to init discriminator
-        "^(discriminator.*|disc_y1_proj.*)$",
+        "^(discriminator\\..*|disc_y1_proj\\..*|disc_bin_emb\\..*|disc_post_elmo_\\..*)$",
         {
           "type": "pretrained",
           "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th",
@@ -117,12 +119,17 @@
             "discriminator._module.layer_7.state_linearity.weight": "gt_task_encoder._module.layer_1.state_linearity.weight",
             "discriminator._module.layer_7.state_linearity.bias": "gt_task_encoder._module.layer_1.state_linearity.bias",
             "disc_y1_proj._module.weight": "gt_tag_projection_layer._module.weight",
-            "disc_y1_proj._module.bias": "gt_tag_projection_layer._module.bias"
+            "disc_y1_proj._module.bias": "gt_tag_projection_layer._module.bias",
+            "disc_bin_emb.weight": "binary_feature_embedding.weight",
+            "disc_post_elmo_.scalar_mix_0.gamma": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.gamma",
+            "disc_post_elmo_.scalar_mix_0.scalar_parameters.0": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.0",
+            "disc_post_elmo_.scalar_mix_0.scalar_parameters.1": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.1",
+            "disc_post_elmo_.scalar_mix_0.scalar_parameters.2": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.2"
           }
         }
       ],
       [ // use pretrained model from retag model to init decoder
-        "^(decoder.*|dec_y2_proj.*|y1_embedding.*)$",
+        "^(decoder\\..*|dec_y2_proj\\..*|y1_embedding\\..*|dec_bin_emb\\..*|dec_post_elmo_\\..*)$",
         {
           "type": "pretrained",
           "weights_file_path": "output/openie/retag/small_xoie_srl_srl_official/best.th",
@@ -135,19 +142,29 @@
             "decoder._module.layer_1.state_linearity.weight": "encoder._module.layer_1.state_linearity.weight",
             "decoder._module.layer_1.state_linearity.bias": "encoder._module.layer_1.state_linearity.bias",
             "dec_y2_proj._module.weight": "tag_projection_layer._module.weight",
-            "dec_y2_proj._module.bias": "tag_projection_layer._module.bias"
+            "dec_y2_proj._module.bias": "tag_projection_layer._module.bias",
+            "dec_bin_emb.weight": "binary_feature_embedding.weight",
+            "dec_post_elmo_.scalar_mix_0.gamma": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.gamma",
+            "dec_post_elmo_.scalar_mix_0.scalar_parameters.0": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.0",
+            "dec_post_elmo_.scalar_mix_0.scalar_parameters.1": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.1",
+            "dec_post_elmo_.scalar_mix_0.scalar_parameters.2": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.2"
           }
         }
       ],
       [ // use pretrained model from retag model to init encoder
-        "^(encoder.*|enc_y1_proj.*|y2_embedding.*)$",
+        "^(y2_embedding\\..*|encoder\\..*|enc_y1_proj.*|enc_bin_emb\\..*|enc_post_elmo_\\..*)$",
         {
           "type": "pretrained",
           "weights_file_path": "output/openie/retag/small_xsrl_oie_sep_model/best.th",
           "parameter_name_overrides": {
             "y2_embedding.weight": "tag_feature_embedding.weight",
             "enc_y1_proj._module.weight": "tag_projection_layer._module.weight",
-            "enc_y1_proj._module.bias": "tag_projection_layer._module.bias"
+            "enc_y1_proj._module.bias": "tag_projection_layer._module.bias",
+            "enc_bin_emb.weight": "binary_feature_embedding.weight",
+            "enc_post_elmo_.scalar_mix_0.gamma": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.gamma",
+            "enc_post_elmo_.scalar_mix_0.scalar_parameters.0": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.0",
+            "enc_post_elmo_.scalar_mix_0.scalar_parameters.1": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.1",
+            "enc_post_elmo_.scalar_mix_0.scalar_parameters.2": "text_field_embedder.token_embedder_elmo._elmo.scalar_mix_0.scalar_parameters.2"
           }
         }
       ]
