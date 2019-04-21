@@ -73,14 +73,14 @@
         "^(binary_feature_embedding\\..*|text_field_embedder\\..*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th"
+          "weights_file_path": "pretrain/srl-model-2018.05.25/weights.th"
         }
       ],
       [
         "^encoder\\.x_encoder\\..*$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th",
+          "weights_file_path": "pretrain/srl-model-2018.05.25/weights.th",
           "parameter_name_overrides": {
             "encoder.x_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_0.input_linearity.weight",
             "encoder.x_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_0.state_linearity.bias",
