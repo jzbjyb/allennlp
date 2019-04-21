@@ -91,8 +91,6 @@ class SemiConditionalVAEOIE(BaseModel):
                  beta: float = 1.0, # a coefficient that controls the strength of KL term (similar to beta-VAE)
                  embedding_dropout: float = 0.0,
                  word_dropout: float = 0.0,  # dropout a word
-                 word_proj_dim: int = None,  # the dim of projection of word embedding
-                 binary_feature_dim_decoder: int = None,  # binary emb used in decoder
                  unsup_loss_type: str = 'all',  # how to compute unsupervised loss
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
@@ -134,7 +132,6 @@ class SemiConditionalVAEOIE(BaseModel):
             assert clip_reward >= 0, 'clip_reward should be nonnegative'
         self._clip_reward = clip_reward
         self._temperature = temperature
-        assert decode_method in {'all', 'partial'}, 'decode_method not supported'
         self._decode_method = decode_method
         assert beta >= 0, 'alpha should be non-negative'
         self._beta = beta
@@ -201,26 +198,7 @@ class SemiConditionalVAEOIE(BaseModel):
         # decoder p(y2|x, y1) or p(y2|y1)
         self.y1_embedding = Embedding(self._y1_num_class, y_feature_dim)
         self.decoder = decoder
-        if self._decode_method == 'all':
-            self._word_proj_dim = word_proj_dim
-            if word_proj_dim:
-                self.word_projection_layer = TimeDistributed(Linear(
-                    text_field_embedder.get_output_dim(), word_proj_dim))
-                x_dim = word_proj_dim
-            else:
-                x_dim = text_field_embedder.get_output_dim()
-            self._binary_feature_dim_decoder = binary_feature_dim_decoder
-            if binary_feature_dim_decoder:
-                self.binary_feature_embedding_decoder = Embedding(2, binary_feature_dim_decoder)  # TODO: integrate
-                x_dim += binary_feature_dim_decoder
-            else:
-                x_dim += binary_feature_dim
-            check_dimensions_match(x_dim + y_feature_dim, decoder.get_input_dim(),
-                                   'text emb dim + verb indicator emb dim + y1 emb dim',
-                                   'decoder input dim')
-        elif self._decode_method == 'partial':
-            check_dimensions_match(y_feature_dim, decoder.get_input_dim(),
-                                   'y1 emb dim', 'decoder input dim')
+        # TODO: different binary emb size for decoder?
         self.dec_y2_proj = TimeDistributed(Linear(decoder.get_output_dim(), self._y2_num_class))
 
         # metrics
@@ -309,24 +287,18 @@ class SemiConditionalVAEOIE(BaseModel):
         # SHAPE: (beam_size * batch_size, seq_len, y_emb_size)
         y1_emb = y1_emb.view(beam_size * batch_size, seq_len, -1)
 
-        t_emb = self.word_dropout(t_emb)  # TODO: is Dropout2d problematic?
-        if self._word_proj_dim:
-            t_emb = self.word_projection_layer(t_emb)
-        x_emb = torch.cat([t_emb, v_emb], -1)
-        # SHAPE: (beam_size * batch_size, seq_len, x_emb_size)
-        x_emb = x_emb.repeat(beam_size, 1, 1)
+        # SHAPE: (beam_size * batch_size, seq_len, t_emb_size)
+        t_emb = t_emb.repeat(beam_size, 1, 1)
+        # SHAPE: (beam_size * batch_size, seq_len, v_emb_size)
+        v_emb = v_emb.repeat(beam_size, 1, 1)
 
         # SHAPE: (beam_size * batch_size, seq_len)
         y2 = y2.repeat(beam_size, 1)
         # SHAPE: (beam_size * batch_size, seq_len)
         mask = mask.repeat(beam_size, 1)
 
-        if self._decode_method == 'all':
-            # concat_emb must be concatenated by the order of word, verb, y1
-            concat_emb = torch.cat([x_emb, y1_emb], -1)
-            enc = self.decoder(concat_emb, mask)
-        elif self._decode_method == 'partial':
-            enc = self.decoder(y1_emb, mask)
+        enc = self.encoder(t_emb, v_emb, y1_emb, mask)
+
         logits = self.dec_y2_proj(enc)
         y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average='sum')
         # SHAPE: (beam_size, batch_size)
