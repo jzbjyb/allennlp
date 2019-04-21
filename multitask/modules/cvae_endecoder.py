@@ -45,9 +45,12 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
         self.x_encoder = x_encoder
         self.yin_encoder = yin_encoder
         # grad
-        modify_req_grad(self.all_encoder, all_encoder_req_grad)
-        modify_req_grad(self.x_encoder, x_encoder_req_grad)
-        modify_req_grad(self.yin_encoder, yin_encoder_req_grad)
+        if self.all_encoder:
+            modify_req_grad(self.all_encoder, all_encoder_req_grad)
+        if self.x_encoder:
+            modify_req_grad(self.x_encoder, x_encoder_req_grad)
+        if self.yin_encoder:
+            modify_req_grad(self.yin_encoder, yin_encoder_req_grad)
 
         # dimensionality
         # TODO: add dimensionality check?
