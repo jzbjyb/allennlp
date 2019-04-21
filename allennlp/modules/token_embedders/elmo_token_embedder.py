@@ -50,6 +50,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
                  do_layer_norm: bool = False,
                  dropout: float = 0.5,
                  requires_grad: bool = False,
+                 scalar_requires_grad: bool = True,
                  projection_dim: int = None,
                  vocab_to_cache: List[str] = None,
                  scalar_mix_parameters: List[float] = None,
@@ -64,6 +65,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
                           do_layer_norm=do_layer_norm,
                           dropout=dropout,
                           requires_grad=requires_grad,
+                          scalar_requires_grad=scalar_requires_grad,
                           vocab_to_cache=vocab_to_cache,
                           scalar_mix_parameters=scalar_mix_parameters,
                           stateful=stateful,
@@ -134,6 +136,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
         options_file = params.pop('options_file')
         weight_file = params.pop('weight_file')
         requires_grad = params.pop('requires_grad', False)
+        scalar_requires_grad = params.pop('scalar_requires_grad', False)
         do_layer_norm = params.pop_bool('do_layer_norm', False)
         dropout = params.pop_float("dropout", 0.5)
         namespace_to_cache = params.pop("namespace_to_cache", None)
@@ -151,6 +154,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
                    do_layer_norm=do_layer_norm,
                    dropout=dropout,
                    requires_grad=requires_grad,
+                   scalar_requires_grad=scalar_requires_grad,
                    projection_dim=projection_dim,
                    vocab_to_cache=vocab_to_cache,
                    scalar_mix_parameters=scalar_mix_parameters,

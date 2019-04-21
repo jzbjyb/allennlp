@@ -89,6 +89,7 @@ class Elmo(torch.nn.Module):
                  weight_file: str,
                  num_output_representations: int,
                  requires_grad: bool = False,
+                 scalar_requires_grad: bool = True,
                  do_layer_norm: bool = False,
                  dropout: float = 0.5,
                  vocab_to_cache: List[str] = None,
@@ -122,7 +123,7 @@ class Elmo(torch.nn.Module):
                         self._elmo_lstm.num_layers,
                         do_layer_norm=do_layer_norm,
                         initial_scalar_parameters=scalar_mix_parameters,
-                        trainable=scalar_mix_parameters is None)
+                        trainable=scalar_mix_parameters is None and scalar_requires_grad)
                 self.add_module('scalar_mix_{}'.format(k), scalar_mix)
                 self._scalar_mixes.append(scalar_mix)
 
@@ -223,6 +224,7 @@ class Elmo(torch.nn.Module):
         options_file = params.pop('options_file')
         weight_file = params.pop('weight_file')
         requires_grad = params.pop('requires_grad', False)
+        scalar_requires_grad = params.pop('scalar_requires_grad', False)
         num_output_representations = params.pop('num_output_representations')
         do_layer_norm = params.pop_bool('do_layer_norm', False)
         keep_sentence_boundaries = params.pop_bool('keep_sentence_boundaries', False)
@@ -235,6 +237,7 @@ class Elmo(torch.nn.Module):
                    weight_file=weight_file,
                    num_output_representations=num_output_representations,
                    requires_grad=requires_grad,
+                   scalar_requires_grad=scalar_requires_grad,
                    do_layer_norm=do_layer_norm,
                    keep_sentence_boundaries=keep_sentence_boundaries,
                    dropout=dropout,

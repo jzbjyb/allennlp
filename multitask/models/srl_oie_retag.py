@@ -29,6 +29,7 @@ class SrlOieRetag(BaseModel):
                  # specify the input and output,
                  # including "xoie_srl", "xsrl_oie", "oie_srl", and "srl_oie"
                  mode: str,
+                 binary_req_grad: bool = True,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -51,7 +52,7 @@ class SrlOieRetag(BaseModel):
 
         # model
         self.text_field_embedder = text_field_embedder
-        self.binary_feature_embedding = Embedding(2, binary_feature_dim)
+        self.binary_feature_embedding = Embedding(2, binary_feature_dim, trainable=binary_req_grad)
         self.tag_feature_embedding = Embedding(
             self.vocab.get_vocab_size(self.yin_ns), tag_feature_dim)
 
