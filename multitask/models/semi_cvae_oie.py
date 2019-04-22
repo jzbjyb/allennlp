@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, TextIO, Optional, Any, Tuple
 
 from overrides import overrides
@@ -20,8 +21,11 @@ from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
 from multitask.metrics import MultipleLoss
-from multitask.modules import PostElmo
+from multitask.modules import PostElmo, CVAEEnDeCoder
+from multitask.modules.util import share_weights
 from .base import BaseModel
+
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 def masked_select_dict_on_first_dim(dicts: Dict[str, torch.Tensor], mask: torch.Tensor):
@@ -76,6 +80,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  discriminator: Seq2SeqEncoder, # p(y1|x)
                  encoder: Seq2SeqEncoder, # p(y1|x, y2)
                  decoder: Seq2SeqEncoder, # p(y2|x, y1) or p(y2|y1)
+                 share_param: bool = False,  # whether to share the params in three components
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
                  kl_method: str = 'sample',  # whether to use sample to approximate kl or calculate exactly
@@ -201,6 +206,18 @@ class SemiConditionalVAEOIE(BaseModel):
         # TODO: different binary emb size for decoder?
         self.dec_y2_proj = TimeDistributed(Linear(decoder.get_output_dim(), self._y2_num_class))
 
+        # share parameters
+        if self._use_post_elmo and share_param:
+            raise ValueError('when share_param is true, use_post_elmo should be disabled')
+        if share_param:
+            if not isinstance(self.encoder, CVAEEnDeCoder) or not isinstance(self.decoder, CVAEEnDeCoder):
+                raise NotImplementedError
+            logging.info('sharing parameters')
+            # share x_encoder in encoder, decoder, and discriminator
+            # TODO: explicitly specify the name of the parameters?
+            share_weights(self.encoder.x_encoder, self.discriminator)
+            share_weights(self.decoder.x_encoder, self.discriminator)
+
         # metrics
         self.y1_span_metric = \
             SpanBasedF1Measure(vocab, tag_namespace=self._y1_label_ns, ignore_classes=['V'])
@@ -297,7 +314,7 @@ class SemiConditionalVAEOIE(BaseModel):
         # SHAPE: (beam_size * batch_size, seq_len)
         mask = mask.repeat(beam_size, 1)
 
-        enc = self.encoder(t_emb, v_emb, y1_emb, mask)
+        enc = self.decoder(t_emb, v_emb, y1_emb, mask)
 
         logits = self.dec_y2_proj(enc)
         y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average='sum')

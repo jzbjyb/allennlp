@@ -136,7 +136,7 @@ class ElmoTokenEmbedder(TokenEmbedder):
         options_file = params.pop('options_file')
         weight_file = params.pop('weight_file')
         requires_grad = params.pop('requires_grad', False)
-        scalar_requires_grad = params.pop('scalar_requires_grad', False)
+        scalar_requires_grad = params.pop('scalar_requires_grad', True)
         do_layer_norm = params.pop_bool('do_layer_norm', False)
         dropout = params.pop_float("dropout", 0.5)
         namespace_to_cache = params.pop("namespace_to_cache", None)
