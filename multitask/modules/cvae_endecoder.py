@@ -1,6 +1,6 @@
 import logging
 import torch
-from torch.nn.modules import Linear, Dropout, Dropout2d
+from torch.nn.modules import Linear, Dropout, Dropout2d, BatchNorm1d
 from allennlp.modules import Seq2SeqEncoder, TimeDistributed
 from allennlp.common.checks import check_dimensions_match
 
@@ -23,7 +23,8 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                  yin_encoder: Seq2SeqEncoder = None,  # yin -> yout
                  all_encoder_req_grad: bool = True,
                  x_encoder_req_grad: bool = True,
-                 yin_encoder_req_grad: bool = True
+                 yin_encoder_req_grad: bool = True,
+                 use_batch_norm: bool = False
                  ) -> None:
         super(CVAEEnDeCoder, self).__init__()
 
@@ -52,6 +53,8 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
         if self.yin_encoder:
             modify_req_grad(self.yin_encoder, yin_encoder_req_grad)
 
+        self.use_batch_norm = use_batch_norm
+
         # dimensionality
         # TODO: add dimensionality check?
         if self.use_x:
@@ -69,6 +72,8 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                     'x_encoder or yin_encoder or all_encoder not specified'
                 self.input_dim = self.x_encoder.get_input_dim() + self.yin_encoder.get_input_dim()
                 self.output_dim = self.all_encoder.get_output_dim()
+                if use_batch_norm:
+                    self.bn = BatchNorm1d(self.x_encoder.get_output_dim() + self.yin_encoder.get_output_dim())
             elif combine_method == 'only_x':
                 assert self.x_encoder, 'x_encoder not specified'
                 self.input_dim = self.x_encoder.get_input_dim()
@@ -114,6 +119,8 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 x_enc = self.x_encoder(x_emb, mask)
                 yin_enc = self.yin_encoder(yin_emb, mask)
                 all_enc = torch.cat([x_enc, yin_enc], -1)
+                if self.use_batch_norm:
+                    all_enc = self.bn(all_enc.permute(0, 2, 1)).permute(0, 2, 1)
                 enc = self.all_encoder(all_enc, mask)
             elif self.combine_method == 'only_x':
                 enc = self.x_encoder(x_emb, mask)
