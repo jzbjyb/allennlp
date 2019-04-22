@@ -41,7 +41,7 @@
     },
     "binary_feature_dim": 100,
     "binary_req_grad": false,
-    "tag_feature_dim": 64,
+    "tag_feature_dim": 300,
     "tag_proj_req_grad": false,
     "initializer": [
       [
