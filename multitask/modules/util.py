@@ -36,10 +36,6 @@ def share_weights(module1: torch.nn.Module, module2: torch.nn.Module, name_mappi
     share/copy all the parameters from module2 to module1
     '''
     for name, param in module1.named_parameters():
-        print(name)
-    for name, param in module2.named_parameters():
-        print(name)
-    for name, param in module1.named_parameters():
         if name in name_mapping:
             name = name_mapping[name]
         if not hasattr_recurse(module2, name):
