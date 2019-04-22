@@ -192,12 +192,12 @@
     "max_instances_in_memory": 6080, // only shuffle consecutive 6080 samples
     "instances_per_epoch": 6080, // we only have 3k oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
-    "batch_size" : 80
+    "batch_size" : 60
   },
   "validation_iterator": {
     "type": "bucket",
     "sorting_keys": [["tokens", "num_tokens"]],
-    "batch_size" : 80
+    "batch_size" : 60
   },
   "trainer": {
     "num_epochs": 200,
