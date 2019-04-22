@@ -15,6 +15,7 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 
 from .base import BaseModel
+from multitask.modules.util import modify_req_grad
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -30,6 +31,7 @@ class SrlOieRetag(BaseModel):
                  # including "xoie_srl", "xsrl_oie", "oie_srl", and "srl_oie"
                  mode: str,
                  binary_req_grad: bool = True,
+                 tag_proj_req_grad: bool = True,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -64,6 +66,7 @@ class SrlOieRetag(BaseModel):
 
         self.tag_projection_layer = TimeDistributed(Linear(
             encoder.get_output_dim(), self.vocab.get_vocab_size(self.yout_ns)))
+        modify_req_grad(self.tag_projection_layer, tag_proj_req_grad)
 
         # metrics
         self.span_metric = SpanBasedF1Measure(vocab, tag_namespace=self.yout_ns, ignore_classes=['V'])
