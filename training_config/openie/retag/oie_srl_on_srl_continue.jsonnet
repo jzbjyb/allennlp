@@ -57,8 +57,16 @@
   "iterator": {
     "type": "bucket",
     "sorting_keys": [["tokens", "num_tokens"]],
-    "max_instances_in_memory": 800, // only shuffle consecutive 800 samples
-    "batch_size" : 80
+    "max_instances_in_memory": 5000, // only shuffle consecutive 800 samples
+    "instances_per_epoch": 20000, // 250k train
+    "batch_size" : 512
+  },
+  "validation_iterator": {
+    "type": "bucket",
+    "sorting_keys": [["tokens", "num_tokens"]],
+    "max_instances_in_memory": 5000, // only shuffle consecutive 800 samples
+    "instances_per_epoch": 10000, // 35k dev
+    "batch_size" : 512
   },
   "trainer": {
     "num_epochs": 200,
