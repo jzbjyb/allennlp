@@ -102,6 +102,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  embedding_dropout: float = 0.0,
                  word_dropout: float = 0.0,  # dropout a word
                  unsup_loss_type: str = 'all',  # how to compute unsupervised loss
+                 unsup_loss_weight: float = 1.0,  # weight of the unsupervised loss
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
@@ -147,6 +148,7 @@ class SemiConditionalVAEOIE(BaseModel):
         self._beta = beta
         assert unsup_loss_type in {'all', 'only_disc'}, 'unsup_loss_type not supported'
         self._unsup_loss_type = unsup_loss_type
+        self._unsup_loss_weight = unsup_loss_weight
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
         self.decode_span_metric = decode_span_metric
@@ -509,6 +511,7 @@ class SemiConditionalVAEOIE(BaseModel):
                 baseline_loss = encoder_reward ** 2
 
             # overall loss
+            unsup_loss = 0.0
             if self._infer_algo == 'reinforce':
                 encoder_loss = (y1_nll_with_reward.mean(0) * unsup_weight).sum()
                 decoder_loss = (y2_nll.mean(0) * unsup_weight).sum()
@@ -521,25 +524,26 @@ class SemiConditionalVAEOIE(BaseModel):
                     discriminator_loss = (self._beta * disc_y1_nll.mean(0) * unsup_weight).sum()
                     self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
                     if self._unsup_loss_type == 'all':
-                        sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
+                        unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
                     elif self._unsup_loss_type == 'only_disc':
-                        sup_unsup_loss += discriminator_loss
+                        unsup_loss += discriminator_loss
                 elif self._kl_method == 'exact':
                     # part of the encoder loss and all of the discriminator loss
                     kl_loss = (kl.mean(0) * unsup_weight).sum()
                     self.y1_multi_loss('disc_l', kl_loss.item(), count=unsup_num)
                     if self._unsup_loss_type == 'all':
-                        sup_unsup_loss += decoder_loss + encoder_loss + kl_loss + baseline_loss
+                        unsup_loss += decoder_loss + encoder_loss + kl_loss + baseline_loss
                     elif self._unsup_loss_type == 'only_disc':
-                        sup_unsup_loss += kl_loss
+                        unsup_loss += kl_loss
             elif self._infer_algo == 'gumbel_softmax':
                 recon_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 kl_loss = (kl.mean(0) * unsup_weight).sum()
                 elbo_loss = recon_loss + kl_loss
-                sup_unsup_loss += elbo_loss
+                unsup_loss += elbo_loss
                 self.y1_multi_loss('elbo_l', elbo_loss.item(), count=unsup_num)
                 self.y1_multi_loss('recon_l', recon_loss.item(), count=unsup_num)
                 self.y1_multi_loss('kl_l', kl_loss.item(), count=unsup_num)
+            sup_unsup_loss += self._unsup_loss_weight * unsup_loss
 
         if tags is not None:
             output_dict['loss'] = sup_unsup_loss / ((mask.sum(1) > 0).float().sum() + 1e-13)
