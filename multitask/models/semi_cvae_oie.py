@@ -22,7 +22,7 @@ from allennlp.modules.conditional_random_field import ConditionalRandomField, al
 
 from multitask.metrics import MultipleLoss
 from multitask.modules import PostElmo, CVAEEnDeCoder
-from multitask.modules.util import share_weights
+from multitask.modules.util import share_weights, modify_req_grad
 from .base import BaseModel
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -81,6 +81,11 @@ class SemiConditionalVAEOIE(BaseModel):
                  encoder: Seq2SeqEncoder, # p(y1|x, y2)
                  decoder: Seq2SeqEncoder, # p(y2|x, y1) or p(y2|y1)
                  share_param: bool = False,  # whether to share the params in three components
+                 # when encoder is the same as prior, decoder is a late_add model
+                 encoder_same_as_pior = False,
+                 enc_to_disc_share: Dict[str, str] = None,
+                 dec_to_disc_share: Dict[str, str] = None,
+                 dec_skip: List[str] = None,
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
                  kl_method: str = 'sample',  # whether to use sample to approximate kl or calculate exactly
@@ -207,16 +212,32 @@ class SemiConditionalVAEOIE(BaseModel):
         self.dec_y2_proj = TimeDistributed(Linear(decoder.get_output_dim(), self._y2_num_class))
 
         # share parameters
+        self.encoder_same_as_pior = encoder_same_as_pior
         if self._use_post_elmo and share_param:
             raise ValueError('when share_param is true, use_post_elmo should be disabled')
-        if share_param:
+        if share_param and not encoder_same_as_pior:
+            # share the base layers in three components
             if not isinstance(self.encoder, CVAEEnDeCoder) or not isinstance(self.decoder, CVAEEnDeCoder):
                 raise NotImplementedError
-            logging.info('sharing parameters')
+            logging.info('sharing parameters in base layers')
             # share x_encoder in encoder, decoder, and discriminator
             # TODO: explicitly specify the name of the parameters?
             share_weights(self.encoder.x_encoder, self.discriminator)
             share_weights(self.decoder.x_encoder, self.discriminator)
+        elif share_param and encoder_same_as_pior:
+            if not isinstance(self.encoder, CVAEEnDeCoder) or not isinstance(self.decoder, CVAEEnDeCoder):
+                raise NotImplementedError
+            if self.encoder.combine_method != 'only_x' \
+                    or self.decoder.combine_method != 'late_add':
+                raise ValueError('the encoder should be only_x and the decoder should be late_add'
+                                 ' when encoder_same_as_pior is set to true')
+            logging.info('reuse discriminator as encoder')
+            share_weights(self.encoder.x_encoder, self.discriminator)  # encoder and disc are the same
+            share_weights(self.enc_y1_proj, self.disc_y1_proj)  # encoder and disc are the same
+            share_weights(self.decoder.x_encoder, self.discriminator,
+                          skip=dec_skip)  # decoder and disc share the base layers
+            modify_req_grad(self.decoder.x_encoder, False, skip=dec_skip)  # fix base layer
+            modify_req_grad(self.binary_feature_embedding, False, skip=dec_skip)  # fix binary embedding
 
         # metrics
         self.y1_span_metric = \
@@ -449,14 +470,17 @@ class SemiConditionalVAEOIE(BaseModel):
                 self.disc_post_elmo(unsup_t), self.disc_bin_emb(unsup_verb), unsup_mask, unsup_y1)  # prior
 
             # kl divergence
-            if self._kl_method == 'sample':
-                # SHAPE: (beam_size, batch_size)
-                kl = self._beta * (disc_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
-            elif self._kl_method == 'exact':
-                # beta * \sum_{y1} {log(q(y1|x,y2) / p(y1|x))}
-                kl = self._beta * self.exact_kl_div(enc_logits, disc_logits, unsup_mask)
-                # SHAPE: (1, batch_size)
-                kl = kl.unsqueeze(0)
+            if self.encoder_same_as_pior:
+                kl = torch.zeros_like(y2_nll)  # kl is zero when encoder is the same as pior (discriminator)
+            else:
+                if self._kl_method == 'sample':
+                    # SHAPE: (beam_size, batch_size)
+                    kl = self._beta * (disc_y1_nll - enc_y1_nll)  # beta * log(q(y1|x,y2) / p(y1|x))
+                elif self._kl_method == 'exact':
+                    # beta * \sum_{y1} {log(q(y1|x,y2) / p(y1|x))}
+                    kl = self._beta * self.exact_kl_div(enc_logits, disc_logits, unsup_mask)
+                    # SHAPE: (1, batch_size)
+                    kl = kl.unsqueeze(0)
 
             # encoder loss
             # only REINFORCE needs manually calculate encoder loss,
@@ -495,19 +519,19 @@ class SemiConditionalVAEOIE(BaseModel):
                 if self._kl_method == 'sample':
                     # be mindful of the beta
                     discriminator_loss = (self._beta * disc_y1_nll.mean(0) * unsup_weight).sum()
+                    self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
                     if self._unsup_loss_type == 'all':
                         sup_unsup_loss += decoder_loss + encoder_loss + discriminator_loss + baseline_loss
                     elif self._unsup_loss_type == 'only_disc':
                         sup_unsup_loss += discriminator_loss
-                    self.y1_multi_loss('disc_l', discriminator_loss.item(), count=unsup_num)
                 elif self._kl_method == 'exact':
                     # part of the encoder loss and all of the discriminator loss
                     kl_loss = (kl.mean(0) * unsup_weight).sum()
+                    self.y1_multi_loss('disc_l', kl_loss.item(), count=unsup_num)
                     if self._unsup_loss_type == 'all':
                         sup_unsup_loss += decoder_loss + encoder_loss + kl_loss + baseline_loss
                     elif self._unsup_loss_type == 'only_disc':
                         sup_unsup_loss += kl_loss
-                    self.y1_multi_loss('disc_l', kl_loss.item(), count=unsup_num)
             elif self._infer_algo == 'gumbel_softmax':
                 recon_loss = (y2_nll.mean(0) * unsup_weight).sum()
                 kl_loss = (kl.mean(0) * unsup_weight).sum()

@@ -4,7 +4,7 @@ from torch.nn.modules import Linear, Dropout, Dropout2d, BatchNorm1d
 from allennlp.modules import Seq2SeqEncoder, TimeDistributed
 from allennlp.common.checks import check_dimensions_match
 
-from multitask.modules.util import modify_req_grad
+from multitask.modules.util import modify_req_grad, SeqWordDropout
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -18,6 +18,7 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                  token_proj_dim: int = None,  # the dim of projection of token embedding
                  use_x: bool = True,  # whether use x or not
                  combine_method: str = 'early_concat',
+                 late_add_alpha: float = 1.0,  # weight to combine x and yin
                  all_encoder: Seq2SeqEncoder = None,  # x, yin -> yout
                  x_encoder: Seq2SeqEncoder = None,  # x -> yout
                  yin_encoder: Seq2SeqEncoder = None,  # yin -> yout
@@ -31,13 +32,17 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
         self.use_x = use_x
         # "early_concat" concat x emb and y emb and feed it to all_encoder
         # "late_concat" feed x emb to x_encoder and y emb to y_encoder and concat the output
-        assert combine_method in {'early_concat', 'late_concat', 'mid_concat', 'only_x'}
+        assert combine_method in {'early_concat', 'late_concat', 'mid_concat', 'late_add', 'only_x'}
         self.combine_method = combine_method
+        self.late_add_alpha = late_add_alpha
 
         # model
         # embedding
         self.embedding_dropout = Dropout(p=embedding_dropout)
-        self.token_dropout = Dropout2d(p=token_dropout)
+        if combine_method == 'late_add':
+            self.token_dropout = SeqWordDropout(p=token_dropout)
+        else:
+            self.token_dropout = Dropout2d(p=token_dropout)
         self.token_proj_dim = token_proj_dim
         if token_proj_dim:
             self.token_projection_layer = TimeDistributed(Linear(token_emb_dim, token_proj_dim))
@@ -66,6 +71,12 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 assert self.x_encoder and self.yin_encoder, 'x_encoder or yin_encoder not specified'
                 self.input_dim = self.x_encoder.get_input_dim() + self.yin_encoder.get_input_dim()
                 self.output_dim = self.x_encoder.get_output_dim() + self.yin_encoder.get_output_dim()
+            elif combine_method == 'late_add':
+                assert self.x_encoder and self.yin_encoder, 'x_encoder or yin_encoder not specified'
+                assert self.x_encoder.get_output_dim() == self.yin_encoder.get_output_dim(), \
+                    'x_encoder and yin_encoder output dim should be the same'
+                self.input_dim = self.x_encoder.get_input_dim() + self.yin_encoder.get_input_dim()
+                self.output_dim = self.x_encoder.get_output_dim()
             elif combine_method == 'mid_concat':
                 # x_encoder and yin_encoder for pre-concat, all_encoder for after-concat
                 assert self.x_encoder and self.yin_encoder and self.all_encoder, \
@@ -91,8 +102,9 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 mask: torch.LongTensor) -> torch.Tensor:
         # emb x
         if self.use_x:
-            # token dropout
-            t_emb = self.token_dropout(t_emb)  # TODO: is Dropout2d problematic?
+            if self.combine_method != 'late_add':
+                # token dropout
+                t_emb = self.token_dropout(t_emb)  # TODO: is Dropout2d problematic?
             # token projection
             if self.token_proj_dim:
                 t_emb = self.token_projection_layer(t_emb)
@@ -100,7 +112,7 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 # SHAPE: (batch_size, seq_len, t_emb_dim + v_emb_dim + yin_emb_dim)
                 inp_emb = torch.cat([t_emb, v_emb, yin_emb], -1)
             elif self.combine_method == 'late_concat' or self.combine_method == 'mid_concat' \
-                    or self.combine_method == 'only_x':
+                    or self.combine_method == 'late_add' or self.combine_method == 'only_x':
                 # SHAPE: (batch_size, seq_len, t_emb_dim + v_emb_dim)
                 x_emb = torch.cat([t_emb, v_emb], -1)
 
@@ -113,6 +125,13 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 x_emb = self.embedding_dropout(x_emb)
                 yin_emb = self.embedding_dropout(yin_emb)
                 enc = torch.cat([self.x_encoder(x_emb, mask), self.yin_encoder(yin_emb, mask)], -1)
+            elif self.combine_method == 'late_add':
+                x_emb = self.embedding_dropout(x_emb)
+                yin_emb = self.embedding_dropout(yin_emb)
+                x_enc = self.x_encoder(x_emb, mask)
+                yin_enc = self.yin_encoder(yin_emb, mask)
+                x_enc = self.token_dropout(x_enc)
+                enc = self.late_add_alpha * x_enc + (1.0 - self.late_add_alpha) * yin_enc
             elif self.combine_method == 'mid_concat':
                 x_emb = self.embedding_dropout(x_emb)
                 yin_emb = self.embedding_dropout(yin_emb)
