@@ -181,7 +181,7 @@
         "^(decoder\\.yin_encoder\\..*|y1_embedding\\..*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/oie_srl/best.th",
+          "weights_file_path": "output/openie/retag/oie_srl_on_srl_continue_smallepoch/best.th",
           "parameter_name_overrides": {
             "y1_embedding.weight": "tag_feature_embedding.weight"
           }
