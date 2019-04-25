@@ -10,17 +10,18 @@
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.gold_conll",
-  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.gold_conll:data/openie/conll_for_allennlp/dev_srl_oie_mt/srl/ontonotes.gold_conll",
+  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
   "model": {
     "type": "srl_mt",
     "text_field_embedder": {
       "elmo": {
         "type": "elmo_token_embedder",
-        "options_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
-        "weight_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
+        "options_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
+        "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
-        "dropout": 0.1
+        "dropout": 0.1,
+        "stateful": false
       }
     },
     "initializer": [
@@ -105,16 +106,14 @@
     "regularizer": [[".*scalar_parameters.*", {"type": "l2", "alpha": 0.001}]]
   },
   "iterator": {
-    "type": "bucket",
-    "max_instances_in_memory": 800, // only shuffle consecutive 800 samples
-    "instances_per_epoch": 6000, // we only have 3k oie training samples
+    "type": "task_bucket",
+    "max_instances_in_memory": 6080, // only shuffle consecutive 800 samples
+    "instances_per_epoch": 6080, // we only have 3k oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
     "batch_size" : 80
   },
   "validation_iterator": {
     "type": "bucket",
-    "max_instances_in_memory": 800, // only shuffle consecutive 800 samples
-    "instances_per_epoch": 4000, // we only have 2k oie validation samples
     "sorting_keys": [["tokens", "num_tokens"]],
     "batch_size" : 80
   },
@@ -129,5 +128,8 @@
       "type": "adadelta",
       "rho": 0.95
     }
+  },
+  "vocabulary": {
+    "directory_path": "output/openie/vocab/srl_oie_multitask_middle/"
   }
 }
