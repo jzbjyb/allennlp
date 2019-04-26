@@ -39,7 +39,7 @@
       "input_size": 1124,
       "hidden_size": 64,
       "num_layers": 8,
-      "recurrent_dropout_probability": 0.1,
+      "recurrent_dropout_probability": 0.0,
       "use_input_projection_bias": false
     },
     "binary_feature_dim": 100,

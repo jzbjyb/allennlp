@@ -5,14 +5,16 @@
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
     "task_weight": {"gt": 1.0, "srl": 1.0},
-    "multiple_files_sample_rate": [1, 3],
+    //"multiple_files_sample_rate": [1, 3],
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
     "lazy": true
   },
   "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  //"train_data_path": "data/openie/conll_for_allennlp/train_split_rm_coor/oie2016.train.gold_conll",
   "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
+  //"validation_data_path": "data/openie/conll_for_allennlp/dev_split_rm_coor/oie2016.dev.gold_conll",
   "model": {
     "type": "srl_mt",
     "text_field_embedder": {
@@ -77,7 +79,7 @@
       "input_size": 1124,
       "hidden_size": 64,
       "num_layers": 6,
-      "recurrent_dropout_probability": 0.1,
+      "recurrent_dropout_probability": 0.0,
       "use_input_projection_bias": false
     },
     "task_encoder": {
@@ -86,7 +88,7 @@
         "input_size": 64,
         "hidden_size": 64,
         "num_layers": 2,
-        "recurrent_dropout_probability": 0.1,
+        "recurrent_dropout_probability": 0.0,
         "use_input_projection_bias": false
       },
       "srl": {
@@ -94,7 +96,7 @@
         "input_size": 64,
         "hidden_size": 64,
         "num_layers": 2,
-        "recurrent_dropout_probability": 0.1,
+        "recurrent_dropout_probability": 0.0,
         "use_input_projection_bias": false
       }
     },
@@ -108,10 +110,10 @@
   },
   "iterator": {
     "type": "task_bucket",
-    "max_instances_in_memory": 12160, // only shuffle consecutive 800 samples
-    "instances_per_epoch": 12160, // we only have 3k oie training samples
+    "max_instances_in_memory": 6080, // only shuffle consecutive 800 samples
+    "instances_per_epoch": 6080, // we only have 3k oie training samples
     "sorting_keys": [["tokens", "num_tokens"]],
-    "batch_size" : 128
+    "batch_size" : 80
   },
   "validation_iterator": {
     "type": "bucket",
