@@ -48,7 +48,7 @@
         "^.*$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/oie_srl_mid/best.th"
+          "weights_file_path": "output/openie/retag/oie_srl_middle/best.th"
         }
       ]
     ],
