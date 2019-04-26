@@ -32,23 +32,23 @@
       "use_x": false,
       "yin_encoder": {
         "type": "alternating_lstm",
-        "input_size": 300,
-        "hidden_size": 300,
+        "input_size": 64,
+        "hidden_size": 64,
         "num_layers": 4,
-        "recurrent_dropout_probability": 0.1,
+        "recurrent_dropout_probability": 0.0,
         "use_input_projection_bias": false
       }
     },
     "binary_feature_dim": 100,
     "binary_req_grad": false,
-    "tag_feature_dim": 300,
+    "tag_feature_dim": 64,
     "tag_proj_req_grad": false,
     "initializer": [
       [
         "^.*$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/oie_srl/best.th"
+          "weights_file_path": "output/openie/retag/oie_srl_mid/best.th"
         }
       ]
     ],
@@ -59,14 +59,14 @@
     "sorting_keys": [["tokens", "num_tokens"]],
     "max_instances_in_memory": 5000, // only shuffle consecutive 800 samples
     "instances_per_epoch": 20000, // 250k train
-    "batch_size" : 512
+    "batch_size" : 256
   },
   "validation_iterator": {
     "type": "bucket",
     "sorting_keys": [["tokens", "num_tokens"]],
     "max_instances_in_memory": 5000, // only shuffle consecutive 800 samples
     "instances_per_epoch": 10000, // 35k dev
-    "batch_size" : 512
+    "batch_size" : 256
   },
   "trainer": {
     "num_epochs": 200,
@@ -81,6 +81,6 @@
     }
   },
   "vocabulary": { // use the multitask vocab
-    "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
+    "directory_path": "output/openie/vocab/srl_oie_multitask_middle/"
   }
 }

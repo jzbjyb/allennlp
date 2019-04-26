@@ -32,23 +32,23 @@
       "use_x": false,
       "yin_encoder": {
         "type": "alternating_lstm",
-        "input_size": 300,
-        "hidden_size": 300,
+        "input_size": 64,
+        "hidden_size": 64,
         "num_layers": 4,
-        "recurrent_dropout_probability": 0.1,
+        "recurrent_dropout_probability": 0.0,
         "use_input_projection_bias": false
       }
     },
     "binary_feature_dim": 100,
     "binary_req_grad": false,
-    "tag_feature_dim": 300,
+    "tag_feature_dim": 64,
     "tag_proj_req_grad": false,
     "initializer": [
       [
         "^tag_projection_layer\\..*$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_large_task_encoder_sr3/best.th",
+          "weights_file_path": "output/openie/multitask_vocab_shuffle/small_srl_oie_mt_middle_task_encoder_nodrop/best.th",
           "parameter_name_overrides": {
             "tag_projection_layer._module.weight": "srl_tag_projection_layer._module.weight",
             "tag_projection_layer._module.bias": "srl_tag_projection_layer._module.bias"
@@ -77,6 +77,6 @@
     }
   },
   "vocabulary": { // use the multitask vocab
-    "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
+    "directory_path": "output/openie/vocab/srl_oie_multitask_middle/"
   }
 }
