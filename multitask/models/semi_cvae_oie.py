@@ -9,6 +9,8 @@ import torch.nn.functional as F
 import torch.distributions as distributions
 from torch.autograd import Variable
 
+import numpy as np
+
 from allennlp.common.checks import check_dimensions_match
 from allennlp.data import Vocabulary
 from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder
@@ -110,7 +112,8 @@ class SemiConditionalVAEOIE(BaseModel):
                  # Whether to use the tag results of (viterbi) decoding to compute span metric,
                  # which is more consistent with test-time performance.
                  decode_span_metric: bool = False,
-                 use_crf: bool = False) -> None:
+                 use_crf: bool = False,
+                 debug: bool = False) -> None:
         # TODO: avoid "gt"
         super(SemiConditionalVAEOIE, self).__init__('MT_gt_labels', vocab, regularizer)
         self._y1_ns = y1_ns
@@ -153,6 +156,7 @@ class SemiConditionalVAEOIE(BaseModel):
         self.ignore_span_metric = ignore_span_metric
         self.decode_span_metric = decode_span_metric
         self.use_crf = use_crf  # TODO: add crf
+        self.debug = debug
         self._use_post_elmo = False
         if hasattr(text_field_embedder, 'token_embedder_elmo'):
             elmo_token_embedder = getattr(text_field_embedder, 'token_embedder_elmo')
@@ -250,6 +254,9 @@ class SemiConditionalVAEOIE(BaseModel):
         elif infer_algo == 'gumbel_softmax':
             self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l', 'recon_l', 'kl_l'])
 
+        if self.debug:
+            self._sample_num = 1
+
         initializer(self)
 
 
@@ -291,7 +298,12 @@ class SemiConditionalVAEOIE(BaseModel):
                 y1 = distributions.Categorical(logits=logits).sample([beam_size])
             elif self._infer_algo == 'gumbel_softmax':
                 # SHAPE: (beam_size, batch_size, seq_len, num_class), (beam_size, batch_size, seq_len)
-                y1_oh, y1 = gumbel_softmax_multiple(logits, self._temperature, self._sample_num)
+                if self.debug:
+                    y1_oh, y1 = gumbel_softmax_multiple(logits, self._temperature, 1)
+                    _, y1 = logits.max(-1)
+                    y1 = y1.unsqueeze(0)
+                else:
+                    y1_oh, y1 = gumbel_softmax_multiple(logits, self._temperature, beam_size)
         elif self._sample_algo == 'beam':  # beam search (deterministic)
             if self._infer_algo == 'reinforce':
                 # SHAPE: (beam_size, batch_size, seq_len)
@@ -465,6 +477,26 @@ class SemiConditionalVAEOIE(BaseModel):
                 y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
                                          self.dec_bin_emb(unsup_verb),
                                          unsup_y1_oh, unsup_y2, unsup_mask)
+
+            if self.debug:
+                unsup_metadata = np.array(metadata)[unsup_tm.cpu().numpy().astype(bool)]
+                for i in range(unsup_mask.size(0)):
+                    tl = unsup_mask[i].sum().item()
+                    word_seq = unsup_metadata[i]['words']
+                    verb_inds = unsup_verb[i].cpu().numpy()[:tl]
+                    y2_seq = [self.vocab.get_token_from_index(t, namespace='MT_srl_labels') for t in
+                              unsup_y2[i].cpu().numpy()[:tl]]
+                    assert(word_seq, y2_seq)
+                    for j in range(1):
+                        cur_score = y2_nll[j, i].item()
+                        y1_seq = [self.vocab.get_token_from_index(t, namespace='MT_gt_labels') for t in
+                                  unsup_y1[j, i].cpu().numpy()[:tl]]
+                        assert len(y1_seq) == len(y2_seq)
+                        comp  = [' '.join(map(str, t)) for t in zip(word_seq, verb_inds, y2_seq, y1_seq)]
+                        print('{}\t{}'.format(cur_score, '\t'.join(comp)))
+                    #c = input('next')
+                    #if c == 'c':
+                    #    break
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)
