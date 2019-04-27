@@ -21,11 +21,11 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode, n_best_viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
+from allennlp.models.base import BaseModel
 
 from multitask.metrics import MultipleLoss
 from multitask.modules import PostElmo, CVAEEnDeCoder
 from multitask.modules.util import share_weights, modify_req_grad
-from .base import BaseModel
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 

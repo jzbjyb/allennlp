@@ -15,7 +15,7 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
 from allennlp.modules.conditional_random_field import ConditionalRandomField, allowed_transitions
 
-from .base import BaseModel
+from allennlp.models.base import BaseModel
 
 
 @Model.register("srl_mt")

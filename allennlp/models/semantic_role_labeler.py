@@ -14,10 +14,11 @@ from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure
+from allennlp.models.base import BaseModel
 
 
 @Model.register("srl")
-class SemanticRoleLabeler(Model):
+class SemanticRoleLabeler(BaseModel):
     """
     This model performs semantic role labeling using BIO tags using Propbank semantic roles.
     Specifically, it is an implementation of `Deep Semantic Role Labeling - What works
@@ -58,8 +59,9 @@ class SemanticRoleLabeler(Model):
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
-                 ignore_span_metric: bool = False) -> None:
-        super(SemanticRoleLabeler, self).__init__(vocab, regularizer)
+                 ignore_span_metric: bool = False,
+                 decode_span_metric: bool = False) -> None:
+        super(SemanticRoleLabeler, self).__init__('labels', vocab, regularizer)
 
         self.text_field_embedder = text_field_embedder
         self.num_classes = self.vocab.get_vocab_size("labels")
@@ -77,6 +79,7 @@ class SemanticRoleLabeler(Model):
         self._only_train_proj = only_train_proj
         self._label_smoothing = label_smoothing
         self.ignore_span_metric = ignore_span_metric
+        self.decode_span_metric = decode_span_metric
 
         check_dimensions_match(text_field_embedder.get_output_dim() + binary_feature_dim,
                                encoder.get_input_dim(),
@@ -144,56 +147,31 @@ class SemanticRoleLabeler(Model):
         class_probabilities = F.softmax(reshaped_log_probs, dim=-1).view([batch_size,
                                                                           sequence_length,
                                                                           self.num_classes])
-        output_dict = {"logits": logits, "class_probabilities": class_probabilities}
+
+        # We need to retain the mask in the output dictionary
+        # so that we can crop the sequences to remove padding
+        # when we do viterbi inference in self.decode.
+        output_dict = {"logits": logits,
+                       "class_probabilities": class_probabilities,
+                       "mask": mask}
+
         if tags is not None:
             loss = sequence_cross_entropy_with_logits(logits,
                                                       tags,
                                                       mask,
                                                       label_smoothing=self._label_smoothing)
             if not self.ignore_span_metric:
-                self.span_metric(class_probabilities, tags, mask)
+                if self.decode_span_metric:
+                    self.span_metric(self.get_decode_pseudo_class_prob(output_dict), tags, mask)
+                else:
+                    self.span_metric(class_probabilities, tags, mask)
             output_dict["loss"] = loss
-
-        # We need to retain the mask in the output dictionary
-        # so that we can crop the sequences to remove padding
-        # when we do viterbi inference in self.decode.
-        output_dict["mask"] = mask
 
         words, verbs, verb_inds = zip(*[(x['words'], x['verb'], x['verb_inds']) for x in metadata])
         if metadata is not None:
             output_dict['words'] = list(words)
             output_dict['verb'] = list(verbs)
             output_dict['verb_inds'] = list(verb_inds)
-        return output_dict
-
-    @overrides
-    def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """
-        Does constrained viterbi decoding on class probabilities output in :func:`forward`.  The
-        constraint simply specifies that the output tags must be a valid BIO sequence.  We add a
-        ``"tags"`` key to the dictionary with the result.
-        """
-        all_predictions = output_dict['class_probabilities']
-        sequence_lengths = get_lengths_from_binary_sequence_mask(output_dict["mask"]).data.tolist()
-
-        if all_predictions.dim() == 3:
-            predictions_list = [all_predictions[i].detach().cpu() for i in range(all_predictions.size(0))]
-        else:
-            predictions_list = [all_predictions]
-        all_tags = []
-        all_probs = []
-        transition_matrix = self.get_viterbi_pairwise_potentials()
-        for predictions, length in zip(predictions_list, sequence_lengths):
-            lp = torch.log(predictions[:length]) # log prob is required by viterbi decoding
-            max_likelihood_sequence, score = viterbi_decode(lp, transition_matrix)
-            probs = [predictions[i, max_likelihood_sequence[i]].numpy().tolist()
-                     for i in range(len(max_likelihood_sequence))]
-            all_probs.append(probs)
-            tags = [self.vocab.get_token_from_index(x, namespace="labels")
-                    for x in max_likelihood_sequence]
-            all_tags.append(tags)
-        output_dict['tags'] = all_tags
-        output_dict['probs'] = all_probs
         return output_dict
 
     def get_metrics(self, reset: bool = False):
@@ -208,31 +186,6 @@ class SemanticRoleLabeler(Model):
             # This can be a lot of metrics, as there are 3 per class.
             # we only really care about the overall metrics, so we filter for them here.
             return {x: y for x, y in metric_dict.items() if "overall" in x}
-
-    def get_viterbi_pairwise_potentials(self):
-        """
-        Generate a matrix of pairwise transition potentials for the BIO labels.
-        The only constraint implemented here is that I-XXX labels must be preceded
-        by either an identical I-XXX tag or a B-XXX tag. In order to achieve this
-        constraint, pairs of labels which do not satisfy this constraint have a
-        pairwise potential of -inf.
-
-        Returns
-        -------
-        transition_matrix : torch.Tensor
-            A (num_labels, num_labels) matrix of pairwise potentials.
-        """
-        all_labels = self.vocab.get_index_to_token_vocabulary("labels")
-        num_labels = len(all_labels)
-        transition_matrix = torch.zeros([num_labels, num_labels])
-
-        for i, previous_label in all_labels.items():
-            for j, label in all_labels.items():
-                # I labels can only be preceded by themselves or
-                # their corresponding B tag.
-                if i != j and label[0] == 'I' and not previous_label == 'B' + label[1:]:
-                    transition_matrix[i, j] = float("-inf")
-        return transition_matrix
 
 
 def write_to_conll_eval_file(prediction_file: TextIO,

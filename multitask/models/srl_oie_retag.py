@@ -13,8 +13,8 @@ from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.training.metrics import SpanBasedF1Measure, CategoricalAccuracy
+from allennlp.models.base import BaseModel
 
-from .base import BaseModel
 from multitask.modules.util import modify_req_grad
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name

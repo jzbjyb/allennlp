@@ -38,7 +38,7 @@ class BaseModel(Model):
         ``"tags"`` key to the dictionary with the result.
         """
         # crf
-        if self.use_crf:
+        if hasattr(self, 'use_crf') and self.use_crf:
             # TODO: add prob
             output_dict['tags'] = [
                 [self.vocab.get_token_from_index(tag, namespace='labels') for tag in instance_tags]
