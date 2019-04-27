@@ -29,6 +29,7 @@ if __name__ == '__main__':
         samples.append(''.join(sample))
         sample = []
 
+    print('{} samples'.format(len(samples)))
     random.shuffle(samples)
     print('write')
     with open(args.out, 'w') as fout:
