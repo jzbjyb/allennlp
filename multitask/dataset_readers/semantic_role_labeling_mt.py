@@ -137,6 +137,8 @@ class SrlReaderMultiTask(DatasetReader):
                 l = l.strip()
                 if len(l) == 0:
                     continue
+                if l.startswith('#'): # comment line
+                    continue
                 tokens = l.split('\t')
                 tokens = [t.split(' ') for t in tokens]
                 tokens, verb_inds, srl_tags, oie_tags = zip(*tokens)
