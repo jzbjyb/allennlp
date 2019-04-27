@@ -31,7 +31,7 @@ def get_samples(conll_filepath: str,
                 verb_ind = [i for i, label in enumerate(tags) if label[-2:] == '-V']
                 if len(verb_ind) != 1:
                     raise Exception('verb not unique')
-                yield tokens, verb_ind[0], tags
+                yield tokens, verb_ind[0], tags, sentence.document_id
 
 
 if __name__ == '__main__':
@@ -54,20 +54,26 @@ if __name__ == '__main__':
     # get corresponding srl samples
     num_srl_sam = 0
     num_overlap = 0
+    docids = defaultdict(lambda: 0)
     for sam in tqdm(get_samples(args.srl, is_dir=True, domain_identifier='nw')):
         sent = ' '.join(sam[0])
         verb_ind = sam[1]
         srl_tags = sam[2]
+        docid = '/'.join(sam[3].split('/')[:2])
         num_srl_sam += 1
         if sent in oie_samples and verb_ind in oie_samples[sent]:
             num_overlap += 1
             oie_samples[sent][verb_ind]['srl'] = srl_tags
+            oie_samples[sent][verb_ind]['srl_from'] = docid
+            docids[docid] += 1
         if num_overlap >= num_oie_sam:
             print('find all oie samples')
             break
 
     print('totally {} oie samples, {} srl samples, {} overlap'.format(
         num_oie_sam, num_srl_sam, num_overlap))
+    docids = sorted(docids.items(), key=lambda x: -x[1])
+    print('overlap srl mainly come from {} out of {} docs'.format(docids[:10], len(docids)))
 
     # save samples
     with open(args.out, 'w') as fout:
