@@ -329,6 +329,7 @@ class SemiConditionalVAEOIE(BaseModel):
                    # SHAPE: (beam_size, batch_size, seq_len) or (beam_size, batch_size, seq_len, num_class)
                    y1: torch.LongTensor,
                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                   y2_mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    mask: torch.LongTensor):
         ''' y1 -> y2 or x, y1 -> y2 '''
         beam_size, batch_size, seq_len = y1.size()[:3]
@@ -347,12 +348,15 @@ class SemiConditionalVAEOIE(BaseModel):
         # SHAPE: (beam_size * batch_size, seq_len)
         y2 = y2.repeat(beam_size, 1)
         # SHAPE: (beam_size * batch_size, seq_len)
+        y2_mask = y2_mask.repeat(beam_size, 1)
+        # SHAPE: (beam_size * batch_size, seq_len)
         mask = mask.repeat(beam_size, 1)
 
         enc = self.decoder(t_emb, v_emb, y1_emb, mask)
 
         logits = self.dec_y2_proj(enc)
-        y2_nll = sequence_cross_entropy_with_logits(logits, y2, mask, average='sum')
+        loss_mask = ((mask * y2_mask) > 0).long()  # logical and on seq len mask and y2_mask
+        y2_nll = sequence_cross_entropy_with_logits(logits, y2, loss_mask, average='sum')
         # SHAPE: (beam_size, batch_size)
         y2_nll = y2_nll.view(beam_size, batch_size)
         return y2_nll
@@ -403,6 +407,7 @@ class SemiConditionalVAEOIE(BaseModel):
                 task_labels: torch.LongTensor,
                 weight: torch.FloatTensor,
                 tags: torch.LongTensor = None,
+                tag_mask: torch.LongTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
         output_dict = {}
         bs, sl = verb_indicator.size()
@@ -454,6 +459,7 @@ class SemiConditionalVAEOIE(BaseModel):
             unsup_t = tokens_embber(unsup_tokens)
             unsup_verb = verb_indicator.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_y2 = tags.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
+            unsup_y2_mask = tag_mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_mask = mask.masked_select(unsup_tm.view(-1, 1)).view(-1, sl)
             unsup_weight = weight.masked_select(unsup_tm)
             unsup_num = (unsup_mask.sum(1) > 0).int().sum().item()
@@ -472,11 +478,11 @@ class SemiConditionalVAEOIE(BaseModel):
             if self._infer_algo == 'reinforce':
                 y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
                                          self.dec_bin_emb(unsup_verb),
-                                         unsup_y1, unsup_y2, unsup_mask)
+                                         unsup_y1, unsup_y2,unsup_y2_mask, unsup_mask)
             elif self._infer_algo == 'gumbel_softmax':
                 y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
                                          self.dec_bin_emb(unsup_verb),
-                                         unsup_y1_oh, unsup_y2, unsup_mask)
+                                         unsup_y1_oh, unsup_y2, unsup_y2_mask, unsup_mask)
 
             if self.debug:
                 unsup_metadata = np.array(metadata)[unsup_tm.cpu().numpy().astype(bool)]
@@ -486,7 +492,7 @@ class SemiConditionalVAEOIE(BaseModel):
                     verb_inds = unsup_verb[i].cpu().numpy()[:tl]
                     y2_seq = [self.vocab.get_token_from_index(t, namespace='MT_srl_labels') for t in
                               unsup_y2[i].cpu().numpy()[:tl]]
-                    assert(word_seq, y2_seq)
+                    assert len(word_seq) == len(y2_seq)
                     for j in range(1):
                         cur_score = y2_nll[j, i].item()
                         y1_seq = [self.vocab.get_token_from_index(t, namespace='MT_gt_labels') for t in

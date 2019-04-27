@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Iterable, Union
+from typing import Dict, List, Iterable, Union, Tuple
 
 from overrides import overrides
 from operator import itemgetter
@@ -62,6 +62,10 @@ class SrlReaderMultiTask(DatasetReader):
                  multiple_files_sample_rate: List[int] = None,
                  # weights of each task with the number of samples considered
                  task_weight: Union[Params, Dict[str, float]] = None,
+                 # the srl tags mapping
+                 srl_tag_mapping: Dict[str, str] = None,
+                 # the srl tags used in reconstruction (mask out other tags)
+                 srl_tag_used: List[str] = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
@@ -75,6 +79,10 @@ class SrlReaderMultiTask(DatasetReader):
         self._task_weight = task_weight
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._domain_identifier = domain_identifier
+        self._srl_tag_mapping = srl_tag_mapping
+        self._srl_tag_used = srl_tag_used
+        if self._srl_tag_used is not None:
+            self._srl_tag_used = set(self._srl_tag_used)
         if file_format == 'conll':
             self.text_to_instance = self.text_to_instance_conll
         elif file_format == 'parallel':
@@ -205,8 +213,13 @@ class SrlReaderMultiTask(DatasetReader):
         weight = self._task_weight[task] # use the weight in config without modification
         fields['weight'] = FloadField(weight)
         if tags:
+            if task == 'srl':
+                tags, tag_mask = self.convert_srl_tags(tags)
+            else:
+                tag_mask = [1] * len(tags)
             # use different namespaces for different task
             fields['tags'] = SequenceLabelField(tags, text_field, 'MT_{}_labels'.format(task))
+            fields['tag_mask'] = SequenceLabelField(tag_mask, text_field, 'MT_{}_mask_labels'.format(task))
         if all([x == 0 for x in verb_label]):
             verb = None
         else:
@@ -233,3 +246,17 @@ class SrlReaderMultiTask(DatasetReader):
             verb = tokens[verb_label.index(1)].text
         fields['metadata'] = MetadataField({'words': [x.text for x in tokens], 'verb': verb})
         return Instance(fields)
+
+    def convert_srl_tags(self, tags: List[str]) -> Tuple[List[str], List[int]]:
+        if self._srl_tag_mapping is None and self._srl_tag_used is None:
+            return tags, [1] * len(tags)
+        new_tags, mask = [], []
+        for tag in tags:
+            if self._srl_tag_mapping and tag in self._srl_tag_mapping:
+                tag = self._srl_tag_mapping[tag]
+            new_tags.append(tag)
+            use = 1
+            if self._srl_tag_used and tag not in self._srl_tag_used:
+                use = 0
+            mask.append(use)
+        return new_tags, mask
