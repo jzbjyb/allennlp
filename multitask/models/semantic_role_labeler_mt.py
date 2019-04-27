@@ -151,6 +151,7 @@ class SemanticRoleLabelerMultiTask(BaseModel):
                 task_labels: torch.LongTensor,
                 weight: torch.FloatTensor,
                 tags: torch.LongTensor = None,
+                tag_mask: torch.LongTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, torch.Tensor]:
 
         # task-agnostic components
