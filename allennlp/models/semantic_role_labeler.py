@@ -60,7 +60,7 @@ class SemanticRoleLabeler(BaseModel):
                  regularizer: Optional[RegularizerApplicator] = None,
                  label_smoothing: float = None,
                  ignore_span_metric: bool = False,
-                 decode_span_metric: bool = False) -> None:
+                 decode_span_metric: bool = True) -> None:
         super(SemanticRoleLabeler, self).__init__('labels', vocab, regularizer)
 
         self.text_field_embedder = text_field_embedder

@@ -111,7 +111,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  ignore_span_metric: bool = False,
                  # Whether to use the tag results of (viterbi) decoding to compute span metric,
                  # which is more consistent with test-time performance.
-                 decode_span_metric: bool = False,
+                 decode_span_metric: bool = True,
                  use_crf: bool = False,
                  debug: bool = False) -> None:
         # TODO: avoid "gt"
