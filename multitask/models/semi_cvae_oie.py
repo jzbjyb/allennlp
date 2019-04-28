@@ -500,9 +500,9 @@ class SemiConditionalVAEOIE(BaseModel):
                         assert len(y1_seq) == len(y2_seq)
                         comp  = [' '.join(map(str, t)) for t in zip(word_seq, verb_inds, y2_seq, y1_seq)]
                         print('{}\t{}'.format(cur_score, '\t'.join(comp)))
-                    #c = input('next')
-                    #if c == 'c':
-                    #    break
+                    c = input('next')
+                    if c == 'c':
+                        break
 
             # discriminator loss
             # SHAPE: (beam_size, batch_size)

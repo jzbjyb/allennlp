@@ -178,6 +178,9 @@ class SrlReaderMultiTask(DatasetReader):
                     task = tasks[0] if len(tasks) > 0 else None # if None, use default task
                     if task is not None and len(np.unique(tasks)) != 1:
                         raise ValueError('inconsistent task')
+                    if len(np.unique(tags)) <= 2:
+                        # skip tags with only V and O
+                        continue
                     yield self.text_to_instance_conll(tokens, verb_indicator, task=task, tags=tags)
 
     @staticmethod
@@ -252,8 +255,12 @@ class SrlReaderMultiTask(DatasetReader):
             return tags, [1] * len(tags)
         new_tags, mask = [], []
         for tag in tags:
-            if self._srl_tag_mapping and tag in self._srl_tag_mapping:
-                tag = self._srl_tag_mapping[tag]
+            if self._srl_tag_mapping:
+                # use mapping or replace tag with 'O'
+                if tag in self._srl_tag_mapping:
+                    tag = self._srl_tag_mapping[tag]
+                else:
+                    tag = 'O'
             new_tags.append(tag)
             use = 1
             if self._srl_tag_used and tag not in self._srl_tag_used:
