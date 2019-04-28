@@ -5,13 +5,35 @@
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
     "task_weight": {"gt": 1.0, "srl": 1.0},
+    //"srl_tag_used": ["B-ARG0", "B-ARG1", "B-ARG2", "B-ARG3", "B-ARG4", "I-ARG0", "I-ARG1", "I-ARG2", "I-ARG3", "I-ARG4", "B-V",
+    //  "B-ARGM-LOC", "B-ARGM-MNR", "B-ARGM-TMP", "I-ARGM-LOC", "I-ARGM-MNR", "I-ARGM-TMP"],
+    "srl_tag_mapping": {
+      "B-ARG0": "I-ARG0",
+      "B-ARG1": "I-ARG0",
+      "B-ARG2": "I-ARG0",
+      "B-ARG3": "I-ARG0",
+      "B-ARG4": "I-ARG0",
+      "I-ARG0": "I-ARG0",
+      "I-ARG1": "I-ARG0",
+      "I-ARG2": "I-ARG0",
+      "I-ARG3": "I-ARG0",
+      "I-ARG4": "I-ARG0",
+      "B-ARGM-LOC": "I-ARG0",
+      "B-ARGM-MNR": "I-ARG0",
+      "B-ARGM-TMP": "I-ARG0",
+      "I-ARGM-LOC": "I-ARG0",
+      "I-ARGM-MNR": "I-ARG0",
+      "I-ARGM-TMP": "I-ARG0",
+      "B-V": "B-V"
+    },
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl_nw_wsj/ontonotes.shuffle.gold_conll",
   "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
+  "test_data_path": "data/openie/conll_for_allennlp/test_split_rm_coor/oie2016.test.gold_conll",
   "model": {
     "type": "semi_cvae_oie",
     "y1_ns": "gt",
@@ -79,7 +101,7 @@
       "token_proj_dim": null,
       "use_x": true,
       "combine_method": "late_add",
-      "late_add_alpha": 0.5,
+      "late_add_alpha": 0.0,
       "x_encoder": {
         "type": "alternating_lstm",
         "input_size": 1124,
@@ -92,7 +114,7 @@
         "type": "alternating_lstm",
         "input_size": 300,
         "hidden_size": 300,
-        "num_layers": 4,
+        "num_layers": 2,
         "recurrent_dropout_probability": 0.1,
         "use_input_projection_bias": false
       }
@@ -181,7 +203,7 @@
         "^(decoder\\.yin_encoder\\..*|y1_embedding\\..*)$",
         {
           "type": "pretrained",
-          "weights_file_path": "output/openie/retag/oie_srl_on_srl_continue_smallepoch/best.th",
+          "weights_file_path": "output/openie/retag/oie_srl_on_real_on_srl_continue/best.th",
           "parameter_name_overrides": {
             "y1_embedding.weight": "tag_feature_embedding.weight"
           }
@@ -244,13 +266,18 @@
     "num_serialized_models_to_keep": 10,
     "validation_metric": "+y1_f1-measure-overall",
     "cuda_device": 0,
+    //"optimizer": {
+    //  "type": "adadelta",
+    //  "rho": 0.95,
+    //  "lr": 0.1
+    //},
     "optimizer": {
-      "type": "adadelta",
-      "rho": 0.95,
-      "lr": 0.1
+      "type": "sgd",
+      "lr": 0.0001
     }
   },
   "vocabulary": {
     "directory_path": "output/openie/vocab/srl_oie_multitask_large/"
-  }
+  },
+  "evaluate_on_test": true
 }
