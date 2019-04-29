@@ -72,6 +72,15 @@ def share_weights(module1: torch.nn.Module,
         setattr_recurse(module1, name, getattr_recurse(module2, name2))
 
 
+def get_tags(y: torch.LongTensor,  # SHAPE: (seq_len,)
+               mask: torch.LongTensor,  # SHAPE: (seq_len,)
+               vocab: Vocabulary,
+               namespace: str):
+    y = y.cpu().numpy()
+    tags = [vocab.get_token_from_index(y[i], namespace=namespace) for i in range(mask.sum().item())]
+    return tags
+
+
 def read_oie_srl_ana_file(filename, n=2000):
     results: List[List[Tuple]] = []
     with open(filename, 'r') as fin:
@@ -134,6 +143,8 @@ def oie_srl_ana(tags_li: List[List[Tuple]], mask_filter=None):
 class Rule():
     def __init__(self, vocab: Vocabulary, y1_ns: str, y2_ns: str):
         self.vocab = vocab
+        self.y1_ns = y1_ns
+        self.y2_ns = y2_ns
         self.y1_o = self.vocab.get_token_index('O', namespace=y1_ns)
         self.y2_o = self.vocab.get_token_index('O', namespace=y2_ns)
 
