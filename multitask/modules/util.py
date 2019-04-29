@@ -2,6 +2,9 @@ from typing import Dict, List, Tuple
 from collections import defaultdict
 
 import torch
+import torch.nn.functional as F
+
+from allennlp.data import Vocabulary
 
 
 class SeqWordDropout(torch.nn.Module):
@@ -126,3 +129,36 @@ def oie_srl_ana(tags_li: List[List[Tuple]], mask_filter=None):
     print('#b per sent (oie): {}'.format(bnum / len(tags_li)))
     print('#b per sent (srl): {}'.format(srlbnum / len(tags_li)))
     print(sorted(tod.items(), key=lambda x: -x[1]))
+
+
+class Rule():
+    def __init__(self, vocab: Vocabulary, y1_ns: str, y2_ns: str):
+        self.vocab = vocab
+        self.y1_o = self.vocab.get_token_index('O', namespace=y1_ns)
+        self.y2_o = self.vocab.get_token_index('O', namespace=y2_ns)
+
+
+    def diff_boundary_rule(self,
+                           y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                           y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                           mask: torch.LongTensor  # SHAPE: (batch_size, seq_len)
+                           ) -> torch.LongTensor:
+        y1_b = y1[:, :, :-1].ne(y1[:, :, 1:]).long() * mask.unsqueeze(0)
+        y2_b = y2[:, :-1].ne(y2[:, 1:]).long() * mask
+        ratio = (y1_b & y2_b.unsqueeze(0)).sum(-1).float() / (y1_b.sum(-1).float() + 1e-10)
+        return 1.0 - ratio
+
+
+    def o_boundary_rule(self,
+                        y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                        y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                        mask: torch.LongTensor  # SHAPE: (batch_size, seq_len)
+                        ) -> torch.LongTensor:
+        y1 = y1.ne(self.y1_o).long() * mask.unsqueeze(0)
+        y2 = y2.ne(self.y2_o).long() * mask
+        y1 = F.pad(y1, [1, 1], 'constant', 0)
+        y2 = F.pad(y2, [1, 1], 'constant', 0)
+        y1_b = y1[:, :, 1:-1] & (1 - (y1[:, :, :-2] & y1[:, :, 2:]))
+        y2_b = y2[:, 1:-1] & (1 - (y2[:, :-2] & y2[:, 2:]))
+        ratio = (y1_b & y2_b.unsqueeze(0)).sum(-1).float() / (y1_b.sum(-1).float() + 1e-10)
+        return 1.0 - ratio

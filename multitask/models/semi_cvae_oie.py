@@ -25,7 +25,7 @@ from allennlp.models.base import BaseModel
 
 from multitask.metrics import MultipleLoss
 from multitask.modules import PostElmo, CVAEEnDeCoder
-from multitask.modules.util import share_weights, modify_req_grad
+from multitask.modules.util import share_weights, modify_req_grad, Rule
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -94,6 +94,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  sample_num: int = 1, # number of samples generated from encoder
                  sample_algo: str = 'beam',  # beam search or random
                  infer_algo: str = 'reinforce', # algorithm used in encoder optimization
+                 use_rule: str = None,  # whether to use rule
                  baseline: str = 'wb',  # baseline used in reinforce
                  clip_reward: float = None,  # avoid very small learning signal
                  temperature: float = 1.0,  # temperature in gumbel softmax
@@ -140,7 +141,10 @@ class SemiConditionalVAEOIE(BaseModel):
             # the grad of cross entropy loss in q(y1|x, y2) and p(y1|x) need to be bp to both logits and targets.
             # TODO: gumbel softmax with sampled kl
             raise NotImplementedError
-        assert baseline in {'wb', 'mean'}, 'baseline not supported'
+        self._use_rule = use_rule
+        if use_rule:
+            self.rule = Rule(vocab, y1_ns=self._y1_label_ns, y2_ns=self._y2_label_ns)
+        assert baseline in {'wb', 'mean', 'non'}, 'baseline not supported'
         self._baseline = baseline
         if clip_reward is not None:
             assert clip_reward >= 0, 'clip_reward should be nonnegative'
@@ -323,6 +327,16 @@ class SemiConditionalVAEOIE(BaseModel):
             return logits, y1, y1_oh, y1_nll
 
 
+    def rule_decode(self,
+                    y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                    y2_mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                    mask: torch.LongTensor):
+        ''' use rule to evaluate the goodness of y1 '''
+        reward = getattr(self.rule, self._use_rule)(y1, y2, mask)
+        return reward
+
+
     def vae_decode(self,
                    t_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, t_emb_size)
                    v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
@@ -476,9 +490,12 @@ class SemiConditionalVAEOIE(BaseModel):
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
             if self._infer_algo == 'reinforce':
-                y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
-                                         self.dec_bin_emb(unsup_verb),
-                                         unsup_y1, unsup_y2,unsup_y2_mask, unsup_mask)
+                if self._use_rule:
+                    y2_nll = self.rule_decode(unsup_y1, unsup_y2, unsup_y2_mask, unsup_mask)
+                else:
+                    y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
+                                             self.dec_bin_emb(unsup_verb),
+                                             unsup_y1, unsup_y2,unsup_y2_mask, unsup_mask)
             elif self._infer_algo == 'gumbel_softmax':
                 y2_nll = self.vae_decode(self.dec_post_elmo(unsup_t),
                                          self.dec_bin_emb(unsup_verb),
@@ -539,6 +556,8 @@ class SemiConditionalVAEOIE(BaseModel):
                     baseline = encoder_reward.mean(0, keepdim=True) * self.w + self.b
                 elif self._baseline == 'mean':
                     baseline = encoder_reward.mean(0, keepdim=True)
+                elif self._baseline == 'non':
+                    baseline = 0.0
                 encoder_reward = encoder_reward - baseline
                 # clip reward
                 if self._clip_reward is not None:
