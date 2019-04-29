@@ -143,8 +143,8 @@ class Rule():
                            y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                            mask: torch.LongTensor  # SHAPE: (batch_size, seq_len)
                            ) -> torch.LongTensor:
-        y1_b = y1[:, :, :-1].ne(y1[:, :, 1:]).long() * mask.unsqueeze(0)
-        y2_b = y2[:, :-1].ne(y2[:, 1:]).long() * mask
+        y1_b = y1[:, :, :-1].ne(y1[:, :, 1:]).long() * mask[:, :-1].unsqueeze(0)
+        y2_b = y2[:, :-1].ne(y2[:, 1:]).long() * mask[:, :-1]
         ratio = (y1_b & y2_b.unsqueeze(0)).sum(-1).float() / (y1_b.sum(-1).float() + 1e-10)
         return 1.0 - ratio
 
