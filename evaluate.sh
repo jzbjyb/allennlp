@@ -6,4 +6,4 @@
 model_dir=$1
 data=$2
 
-allennlp evaluate ${model_dir} ${data} --include-package=multitask
+allennlp evaluate ${model_dir} ${data} --include-package=multitask --cuda-device=0

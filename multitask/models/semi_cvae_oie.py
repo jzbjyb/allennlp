@@ -492,13 +492,14 @@ class SemiConditionalVAEOIE(BaseModel):
                     verb_inds = unsup_verb[i].cpu().numpy()[:tl]
                     y2_seq = [self.vocab.get_token_from_index(t, namespace='MT_srl_labels') for t in
                               unsup_y2[i].cpu().numpy()[:tl]]
+                    y2_mask_seq = [t for t in unsup_y2_mask[i].cpu().numpy()[:tl]]
                     assert len(word_seq) == len(y2_seq)
                     for j in range(1):
                         cur_score = y2_nll[j, i].item()
                         y1_seq = [self.vocab.get_token_from_index(t, namespace='MT_gt_labels') for t in
                                   unsup_y1[j, i].cpu().numpy()[:tl]]
                         assert len(y1_seq) == len(y2_seq)
-                        comp  = [' '.join(map(str, t)) for t in zip(word_seq, verb_inds, y2_seq, y1_seq)]
+                        comp  = [' '.join(map(str, t)) for t in zip(word_seq, verb_inds, y2_mask_seq, y2_seq, y1_seq)]
                         print('{}\t{}'.format(cur_score, '\t'.join(comp)))
                     c = input('next')
                     if c == 'c':

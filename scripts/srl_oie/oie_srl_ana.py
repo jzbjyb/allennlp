@@ -10,6 +10,9 @@ import matplotlib
 matplotlib.use('pdf')
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import spacy
+
+nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
 
 
 def pmi_matrix(tag1, tag2, thres=0):
@@ -48,10 +51,11 @@ def plot_correlation(matrix, yclasses, xclasses, title, saveto):
     plt.savefig(saveto)
 
 
-def read_oie_srl_parallel(filepath: str) -> Tuple[List[str], List[str]]:
+def read_oie_srl_parallel(filepath: str, method='') -> Tuple[List[str], List[str], List[str]]:
+    assert method in {None, 'pos_oie', 'pos_srl', 'pos_all'}
     srls, oies = [], []
     with open(filepath, 'r') as fin:
-        for l in tqdm(fin):
+        for i, l in tqdm(enumerate(fin)):
             l = l.strip()
             if len(l) == 0:
                 continue
@@ -61,6 +65,14 @@ def read_oie_srl_parallel(filepath: str) -> Tuple[List[str], List[str]]:
             tokens = [t.split(' ') for t in tokens]
             tokens, verb_inds, srl_tags, oie_tags = zip(*tokens)
             verb_inds = list(map(int, verb_inds))
+            if method.startswith('pos_'):
+                # get pos
+                tokens_tag = nlp.tagger(nlp.tokenizer.tokens_from_list(list(tokens)))
+                pos = [t.tag_ for t in tokens_tag]
+                if method == 'pos_all' or method == 'pos_oie':
+                    oie_tags = list(map(lambda x: '|'.join(x), zip(oie_tags, pos)))
+                if method == 'pos_all' or method == 'pos_srl':
+                    srl_tags = list(map(lambda x: '|'.join(x), zip(srl_tags, pos)))
             srls.extend(srl_tags)
             oies.extend(oie_tags)
     return srls, oies
@@ -73,17 +85,19 @@ if __name__ == '__main__':
 
     srls, oies = [], []
     for inp in args.inp.split(':'):
-        s, o = read_oie_srl_parallel(inp)
+        s, o = read_oie_srl_parallel(inp, method='')
         srls.extend(s)
         oies.extend(o)
 
     labels = np.unique(srls + oies)
     cm = confusion_matrix(srls, oies, labels=labels)
+
     pmi, coocc, oie_labels, srl_labels = pmi_matrix(oies, srls, thres=100)
 
     with np.printoptions(precision=3, suppress=True):
         print('totally {} pairs of labels'.format(len(srls)))
-        print('{} labels: {}'.format(len(labels), labels))
+        print('{} SRL tags: {}'.format(len(srl_labels), srl_labels))
+        print('{} OIE tags: {}'.format(len(oie_labels), oie_labels))
         print('{} confusion matrix:'.format(cm.shape))
         print(cm)
         #print('{} pmi matrix'.format(pmi.shape))

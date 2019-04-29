@@ -80,7 +80,7 @@ def read_oie_srl_ana_file(filename, n=2000):
     return results
 
 
-def oie_srl_ana(tags_li: List[List[Tuple]]):
+def oie_srl_ana(tags_li: List[List[Tuple]], mask_filter=None):
     tsd = defaultdict(lambda: 0)
     tod = defaultdict(lambda: 0)
     all = 0
@@ -89,7 +89,9 @@ def oie_srl_ana(tags_li: List[List[Tuple]]):
     bnum, inum, onum = 0, 0, 0
     tp, tn, fp, fn = 0, 0, 0, 0
     for tags in tags_li:
-        for w, vi, ts, to in tags:
+        for w, vi, tsm, ts, to in tags:
+            if mask_filter is not None and tsm != mask_filter:
+                continue
             all += 1
             # count tags
             tsd[ts] += 1
