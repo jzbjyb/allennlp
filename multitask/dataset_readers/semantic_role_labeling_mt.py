@@ -66,6 +66,7 @@ class SrlReaderMultiTask(DatasetReader):
                  srl_tag_mapping: Dict[str, str] = None,
                  # the srl tags used in reconstruction (mask out other tags)
                  srl_tag_used: List[str] = None,
+                 only_bio: bool = False,  # convert all srl tags to B-ARG0, I-ARG0, and O
                  token_indexers: Dict[str, TokenIndexer] = None,
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
@@ -81,6 +82,7 @@ class SrlReaderMultiTask(DatasetReader):
         self._domain_identifier = domain_identifier
         self._srl_tag_mapping = srl_tag_mapping
         self._srl_tag_used = srl_tag_used
+        self._only_bio = only_bio
         if self._srl_tag_used is not None:
             self._srl_tag_used = set(self._srl_tag_used)
         if file_format == 'conll':
@@ -240,6 +242,7 @@ class SrlReaderMultiTask(DatasetReader):
         fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
         # TODO: better way than hard-code
         if srl_tags:
+            srl_tags, _ = self.convert_srl_tags(srl_tags)  # this should be consistent with the semi cvae setting
             fields['srl_tags'] = SequenceLabelField(srl_tags, text_field, 'MT_srl_labels')
         if oie_tags:
             fields['oie_tags'] = SequenceLabelField(oie_tags, text_field, 'MT_gt_labels')
@@ -251,11 +254,20 @@ class SrlReaderMultiTask(DatasetReader):
         return Instance(fields)
 
     def convert_srl_tags(self, tags: List[str]) -> Tuple[List[str], List[int]]:
-        if self._srl_tag_mapping is None and self._srl_tag_used is None:
+        if self._srl_tag_mapping is None and self._srl_tag_used is None and not self._only_bio:
             return tags, [1] * len(tags)
         new_tags, mask = [], []
         for tag in tags:
-            if self._srl_tag_mapping:
+            if self._only_bio:
+                if tag.startswith('B'):
+                    tag = 'B-ARG0'
+                elif tag.startswith('I'):
+                    tag = 'I-ARG0'
+                elif tag == 'O':
+                    tag = 'O'
+                else:
+                    raise ValueError('not BIO tagging')
+            elif self._srl_tag_mapping:
                 # use mapping or replace tag with 'O'
                 if tag in self._srl_tag_mapping:
                     tag = self._srl_tag_mapping[tag]
