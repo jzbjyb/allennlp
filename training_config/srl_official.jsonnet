@@ -7,17 +7,16 @@
       "elmo": {"type": "elmo_characters"}
     }
   },
-  //"train_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/train/",
-  "train_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/train",
-  //"validation_data_path": "/home/zhengbaj/exp/allennlp/data/srl/conll-formatted-ontonotes-5.0/data/development/",
-  "validation_data_path": "/home/zhengbaj/exp/allennlp/data/openie/conll_for_allennlp/dev",
+  "train_data_path": "data/openie/conll_for_allennlp/train_split_rm_coor",
+  "validation_data_path": "data/openie/conll_for_allennlp/dev_split_rm_coor",
+  "test_data_path": "data/openie/conll_for_allennlp/test_split_rm_coor",
   "model": {
     "type": "srl",
     "text_field_embedder": {
       "elmo": {
         "type": "elmo_token_embedder",
-        "options_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
-        "weight_file": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
+        "options_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.options_file",
+        "weight_file": "pretrain/srl-model-2018.05.25/fta/model.text_field_embedder.elmo.weight_file",
         "do_layer_norm": false,
         "dropout": 0.1
       }
@@ -47,9 +46,9 @@
     "batch_size" : 80
   },
   "trainer": {
-    "num_epochs": 100,
+    "num_epochs": 200,
     "grad_clipping": 1.0,
-    "patience": 5,
+    "patience": 10,
     "num_serialized_models_to_keep": 10,
     "validation_metric": "+f1-measure-overall",
     "cuda_device": 0,
@@ -60,5 +59,6 @@
   },
   "vocabulary": {
     "directory_path": "/home/zhengbaj/exp/allennlp/pretrain/srl-model-2018.05.25/vocabulary_for_openie_finetune/"
-  }
+  },
+  "evaluate_on_test": true
 }
