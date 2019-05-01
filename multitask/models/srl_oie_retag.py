@@ -30,6 +30,7 @@ class SrlOieRetag(BaseModel):
                  # specify the input and output,
                  # including "xoie_srl", "xsrl_oie", "oie_srl", and "srl_oie"
                  mode: str,
+                 lang_model: str = None,  # treat it as a language model problem (mainly for oie)
                  binary_req_grad: bool = True,
                  tag_proj_req_grad: bool = True,
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -39,13 +40,21 @@ class SrlOieRetag(BaseModel):
         # determine the input and output of the model
         assert mode in {'xoie_srl', 'xsrl_oie', 'oie_srl', 'srl_oie'}, 'mode not supported'
         self.mode = mode
+        assert lang_model in {'oie', 'srl', None}
+        self.lang_model = lang_model
         self.use_x = mode.split('_')[0][:1] == 'x'
         self.yin = mode.split('_')[0][-3:]
         self.yout = mode.split('_')[1]
-        self.yin_ns = 'MT_{}_labels'.format('gt' if self.yin == 'oie' else self.yin)
-        self.yout_ns = 'MT_{}_labels'.format('gt' if self.yout == 'oie' else self.yout)
-        logger.info('The retag is {}{} -> {}'.format(
-            'x,' if self.use_x else '', self.yin, self.yout))
+        if not lang_model:
+            self.yin_ns = 'MT_{}_labels'.format('gt' if self.yin == 'oie' else self.yin)
+            self.yout_ns = 'MT_{}_labels'.format('gt' if self.yout == 'oie' else self.yout)
+            logger.info('The retag is {}{} -> {}'.format(
+                'x,' if self.use_x else '', self.yin, self.yout))
+        else:
+            assert self.yin == lang_model, 'language model tag should be consistent with mode'
+            self.yin_ns = 'MT_{}_se_labels'.format('gt' if self.yin == 'oie' else self.yin)
+            self.yout_ns = self.yin_ns
+            logger.info('The language model is {} -> {}'.format(self.yin, self.yin))
 
         # init base model
         super(SrlOieRetag, self).__init__(self.yout_ns, vocab, regularizer)
@@ -101,7 +110,8 @@ class SrlOieRetag(BaseModel):
         if yout_tag is not None:
             loss = sequence_cross_entropy_with_logits(
                 logits, yout_tag, mask, label_smoothing=self._label_smoothing)
-            self.span_metric(cp, yout_tag, mask)
+            if not self.lang_model:
+                self.span_metric(cp, yout_tag, mask)
             self.accuracy(logits, yout_tag, mask)
             output_dict['loss'] = loss
 

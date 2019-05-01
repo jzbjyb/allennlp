@@ -67,6 +67,7 @@ class SrlReaderMultiTask(DatasetReader):
                  # the srl tags used in reconstruction (mask out other tags)
                  srl_tag_used: List[str] = None,
                  only_bio: bool = False,  # convert all srl tags to B-ARG0, I-ARG0, and O
+                 lang_model: str = None,  # treat it as a language model problem (mainly for oie)
                  token_indexers: Dict[str, TokenIndexer] = None,
                  domain_identifier: str = None,
                  lazy: bool = False) -> None:
@@ -83,6 +84,8 @@ class SrlReaderMultiTask(DatasetReader):
         self._srl_tag_mapping = srl_tag_mapping
         self._srl_tag_used = srl_tag_used
         self._only_bio = only_bio
+        assert lang_model in {'oie', 'srl', None}
+        self._lang_model = lang_model
         if self._srl_tag_used is not None:
             self._srl_tag_used = set(self._srl_tag_used)
         if file_format == 'conll':
@@ -237,15 +240,31 @@ class SrlReaderMultiTask(DatasetReader):
                                   srl_tags: List[str] = None,
                                   oie_tags: List[str] = None) -> Instance:
         fields: Dict[str, Field] = {}
-        text_field = TextField(tokens, token_indexers=self._token_indexers)
-        fields['tokens'] = text_field
-        fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
         # TODO: better way than hard-code
-        if srl_tags:
-            srl_tags, _ = self.convert_srl_tags(srl_tags)  # this should be consistent with the semi cvae setting
-            fields['srl_tags'] = SequenceLabelField(srl_tags, text_field, 'MT_srl_labels')
-        if oie_tags:
-            fields['oie_tags'] = SequenceLabelField(oie_tags, text_field, 'MT_gt_labels')
+        if not self._lang_model:
+            text_field = TextField(tokens, token_indexers=self._token_indexers)
+            fields['tokens'] = text_field
+            fields['verb_indicator'] = SequenceLabelField(verb_label, text_field)
+            if srl_tags:
+                srl_tags, _ = self.convert_srl_tags(srl_tags)  # this should be consistent with the semi cvae setting
+                fields['srl_tags'] = SequenceLabelField(srl_tags, text_field, 'MT_srl_labels')
+            if oie_tags:
+                fields['oie_tags'] = SequenceLabelField(oie_tags, text_field, 'MT_gt_labels')
+        else:
+            # to be of the same length as label fields
+            text_field = TextField(tokens + [Token('dumb')], token_indexers=self._token_indexers)
+            fields['tokens'] = text_field
+            fields['verb_indicator'] = SequenceLabelField(verb_label + verb_label[-1:], text_field)
+            if self._lang_model == 'oie':
+                in_tags = ('<s>',) + oie_tags
+                out_tags = oie_tags + ('</s>',)
+                fields['oie_tags'] = SequenceLabelField(in_tags, text_field, 'MT_gt_se_labels')
+                fields['srl_tags'] = SequenceLabelField(out_tags, text_field, 'MT_gt_se_labels')
+            elif self._lang_model == 'srl':
+                in_tags = ('<s>',) + srl_tags
+                out_tags = srl_tags + ('</s>',)
+                fields['srl_tags'] = SequenceLabelField(in_tags, text_field, 'MT_srl_se_labels')
+                fields['oie_tags'] = SequenceLabelField(out_tags, text_field, 'MT_srl_se_labels')
         if all([x == 0 for x in verb_label]):
             verb = None
         else:
