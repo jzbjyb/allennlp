@@ -85,9 +85,11 @@ class SemiConditionalVAEOIE(BaseModel):
                  share_param: bool = False,  # whether to share the params in three components
                  # when encoder is the same as prior, decoder is a late_add model
                  encoder_same_as_pior = False,
+                 fix_prior = False,
                  enc_to_disc_share: Dict[str, str] = None,
                  dec_to_disc_share: Dict[str, str] = None,
                  dec_skip: List[str] = None,
+                 enc_skip: List[str] = None,
                  y1_ns: str = 'gt',
                  y2_ns: str = 'srl',
                  kl_method: str = 'sample',  # whether to use sample to approximate kl or calculate exactly
@@ -223,9 +225,12 @@ class SemiConditionalVAEOIE(BaseModel):
 
         # share parameters
         self.encoder_same_as_pior = encoder_same_as_pior
+        self.fix_prior = fix_prior
+        if fix_prior and encoder_same_as_pior:
+            raise ValueError('when prior is fixed, it can not be the same as the encoder')
         if self._use_post_elmo and share_param:
             raise ValueError('when share_param is true, use_post_elmo should be disabled')
-        if share_param and not encoder_same_as_pior:
+        if share_param and not encoder_same_as_pior and not fix_prior:
             # share the base layers in three components
             if not isinstance(self.encoder, CVAEEnDeCoder) or not isinstance(self.decoder, CVAEEnDeCoder):
                 raise NotImplementedError
@@ -248,15 +253,33 @@ class SemiConditionalVAEOIE(BaseModel):
                           skip=dec_skip)  # decoder and disc share the base layers
             modify_req_grad(self.decoder.x_encoder, False, skip=dec_skip)  # fix base layer
             modify_req_grad(self.binary_feature_embedding, False, skip=dec_skip)  # fix binary embedding
+        elif share_param and fix_prior:
+            if not isinstance(self.encoder, CVAEEnDeCoder) or not isinstance(self.decoder, CVAEEnDeCoder):
+                raise NotImplementedError
+            if self.encoder.combine_method != 'only_x' \
+                    or self.decoder.combine_method != 'late_add':
+                raise ValueError('the encoder should be only_x and the decoder should be late_add'
+                                 ' when fix_prior is set to true')
+            logging.info('fix discriminator')
+            share_weights(self.encoder.x_encoder, self.discriminator,
+                          skip=enc_skip)  # encoder and disc share the base layers
+            share_weights(self.decoder.x_encoder, self.discriminator,
+                          skip=dec_skip)  # decoder and disc share the base layers
+            modify_req_grad(self.discriminator, False)  # fix discriminator
+            modify_req_grad(self.disc_y1_proj, False)  # fix discriminator
+            modify_req_grad(self.binary_feature_embedding, False)  # fix binary embedding
 
         # metrics
         self.y1_span_metric = \
             SpanBasedF1Measure(vocab, tag_namespace=self._y1_label_ns, ignore_classes=['V'])
         self.y1_accuracy = CategoricalAccuracy(top_k=1, tie_break=False)
+        extra_loss = []
+        if fix_prior:
+            extra_loss = ['enc_sup_l']
         if infer_algo == 'reinforce':
-            self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l', 'base_l'])
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'enc_l', 'dec_l', 'disc_l', 'base_l'] + extra_loss)
         elif infer_algo == 'gumbel_softmax':
-            self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l', 'recon_l', 'kl_l'])
+            self.y1_multi_loss = MultipleLoss(['sup_l', 'elbo_l', 'recon_l', 'kl_l'] + extra_loss)
 
         if self.debug:
             self._sample_num = 1
@@ -290,11 +313,20 @@ class SemiConditionalVAEOIE(BaseModel):
                    v_emb: torch.Tensor,  # SHAPE: (batch_size, seq_len, v_emb_size)
                    y2: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
                    mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
-                   beam_size: int = 1):
+                   beam_size: int = 1,
+                   y1_ground_truth: torch.LongTensor = None):  # SHAPE: (batch_size, seq_len)
         ''' x,y2 -> y1 '''
-        y2_emb = self.y2_embedding(y2)
+        if y2 is None:  # not use y2 in encoder
+            y2_emb = None
+        else:
+            y2_emb = self.y2_embedding(y2)
         enc = self.encoder(t_emb, v_emb, y2_emb, mask)
         logits = self.enc_y1_proj(enc)
+
+        if y1_ground_truth is not None:  # no sampling
+            y1_nll = sequence_cross_entropy_with_logits(
+                logits, y1_ground_truth, mask, average='sum', label_smoothing=self._label_smoothing)
+            return logits, None, None, y1_nll
 
         if self._sample_algo == 'random':  # random sample from categorical distribution
             if self._infer_algo == 'reinforce':
@@ -456,15 +488,33 @@ class SemiConditionalVAEOIE(BaseModel):
             if tags is not None:
                 sup_loss = (sup_y1_nll * sup_weight).sum()
                 sup_unsup_loss += sup_loss
-                # metrics
-                if not self.ignore_span_metric:
-                    if self.decode_span_metric:
-                        self.y1_span_metric(
-                            self.get_decode_pseudo_class_prob(output_dict), sup_y1, sup_mask)
-                    else:
-                        self.y1_span_metric(sup_y1_cp, sup_y1, sup_mask)
-                self.y1_accuracy(sup_y1_logits, sup_y1, sup_mask)
-                self.y1_multi_loss('sup_l', sup_loss.item(), count=sup_num)
+                if self.fix_prior:  # test encoder on sup dataset
+                    enc_sup_y1_logits, _, _, enc_sup_y1_nll = self.vae_encode(
+                        self.disc_post_elmo(sup_t), self.disc_bin_emb(sup_verb), None, sup_mask,
+                        beam_size=1, y1_ground_truth=sup_y1)
+                    enc_sup_loss = (enc_sup_y1_nll * sup_weight).sum()
+                    enc_sup_y1_cp = F.softmax(enc_sup_y1_logits, dim=-1)
+                    od = {'logits': enc_sup_y1_logits, 'class_probabilities': enc_sup_y1_cp, 'mask': sup_mask}
+                    # metrics
+                    if not self.ignore_span_metric:
+                        if self.decode_span_metric:
+                            self.y1_span_metric(
+                                self.get_decode_pseudo_class_prob(od), sup_y1, sup_mask)
+                        else:
+                            self.y1_span_metric(enc_sup_y1_cp, sup_y1, sup_mask)
+                    self.y1_accuracy(enc_sup_y1_logits, sup_y1, sup_mask)
+                    self.y1_multi_loss('enc_sup_l', enc_sup_loss.item(), count=sup_num)
+                else:
+                    # metrics
+                    if not self.ignore_span_metric:
+                        if self.decode_span_metric:
+                            self.y1_span_metric(
+                                self.get_decode_pseudo_class_prob(output_dict), sup_y1, sup_mask)
+                        else:
+                            self.y1_span_metric(sup_y1_cp, sup_y1, sup_mask)
+                    self.y1_accuracy(sup_y1_logits, sup_y1, sup_mask)
+                    self.y1_multi_loss('sup_l', sup_loss.item(), count=sup_num)
+
 
         # unsupervised
         unsup_tm = task_labels.eq(self._y2_ind)
