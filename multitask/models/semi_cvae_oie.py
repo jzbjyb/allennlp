@@ -82,6 +82,7 @@ class SemiConditionalVAEOIE(BaseModel):
                  discriminator: Seq2SeqEncoder, # p(y1|x)
                  encoder: Seq2SeqEncoder, # p(y1|x, y2)
                  decoder: Seq2SeqEncoder, # p(y2|x, y1) or p(y2|y1)
+                 lang_model: Seq2SeqEncoder = None,  # oie lang model used as reward
                  share_param: bool = False,  # whether to share the params in three components
                  # when encoder is the same as prior, decoder is a late_add model
                  encoder_same_as_pior = False,
@@ -223,6 +224,15 @@ class SemiConditionalVAEOIE(BaseModel):
         # TODO: different binary emb size for decoder?
         self.dec_y2_proj = TimeDistributed(Linear(decoder.get_output_dim(), self._y2_num_class))
 
+        # language model
+        if lang_model is not None:
+            # TODO: make sure that <s> and </s> are the last two tags
+            self._lang_start = self._y1_num_class
+            self._lang_end = self._y1_num_class + 1
+            self.lang_embedding = Embedding(self._y1_num_class + 2, y_feature_dim)
+            self.lang_model = lang_model
+            self.lang_proj = TimeDistributed(Linear(lang_model.get_output_dim(), self._y1_num_class + 2))
+
         # share parameters
         self.encoder_same_as_pior = encoder_same_as_pior
         self.fix_prior = fix_prior
@@ -285,6 +295,31 @@ class SemiConditionalVAEOIE(BaseModel):
             self._sample_num = 1
 
         initializer(self)
+
+
+    def language_model(self,
+                       y1: torch.LongTensor,  # SHAPE: (beam_size, batch_size, seq_len)
+                       mask: torch.LongTensor,  # SHAPE: (batch_size, seq_len)
+                       ) -> torch.Tensor:
+        # add start and end symbol
+        inp_y1 = F.pad(y1, [1, 0], 'constant', self._lang_start)
+        out_y1 = y1 * mask.unsqueeze(0) + (1 - mask.unsqueeze(0)) * self._lang_end
+        out_y1 = F.pad(out_y1, [0, 1], 'constant', 0)
+        mask = F.pad(mask, [1, 0], 'constant', 1)
+
+        beam_size, batch_size, seq_len = inp_y1.size()
+        inp_y1 = inp_y1.view(-1, seq_len)
+        out_y1 = out_y1.view(-1, seq_len)
+        mask = mask.repeat(beam_size, 1)
+
+        inp_y1_emb = self.lang_embedding(inp_y1)
+        enc = self.lang_model(None, None, inp_y1_emb, mask)
+        logits = self.lang_proj(enc)
+
+        lang_nll = sequence_cross_entropy_with_logits(
+            logits, out_y1, mask, average='sum', label_smoothing=self._label_smoothing)
+        lang_nll = lang_nll.view(beam_size, batch_size)
+        return lang_nll
 
 
     def beam_search_sample(self,
@@ -537,6 +572,14 @@ class SemiConditionalVAEOIE(BaseModel):
                                 self.enc_bin_emb(unsup_verb),
                                 unsup_y2, unsup_mask, beam_size=self._sample_num)
 
+            # language model
+            if self.lang_model and self._infer_algo == 'reinforce':
+                lang_y1_nll = self.language_model(unsup_y1, unsup_mask)
+            if self.lang_model and self._infer_algo == 'gumbel_softmax':
+                # TODO add gumbel for language model
+                raise NotImplementedError
+                #lang_y1_nll = self.language_model(unsup_y1_oh, unsup_mask)
+
             # decoder loss (reconstruction loss)
             # SHAPE: (beam_size, batch_size)
             if self._infer_algo == 'reinforce':
@@ -594,12 +637,16 @@ class SemiConditionalVAEOIE(BaseModel):
             # only REINFORCE needs manually calculate encoder loss,
             # while gumbel_softmax could directly do bp
             if self._infer_algo == 'reinforce':
+                if self.lang_model:
+                    encoder_reward = -lang_y1_nll
+                else:
+                    encoder_reward = 0.0
                 if self._kl_method == 'sample':
                     # SHAPE: (beam_size, batch_size)
-                    encoder_reward = -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
+                    encoder_reward += -y2_nll - kl  # log(p(y2|y1)) - log(q(y1|x,y2) / p(y1|x))
                     encoder_reward = encoder_reward.detach() - self._beta  # be mindful of the beta
                 elif self._kl_method == 'exact':
-                    encoder_reward = -y2_nll  # log(p(y2|y1)
+                    encoder_reward += -y2_nll  # log(p(y2|y1)
                     encoder_reward = encoder_reward.detach()
                 # reduce variance
                 if self._baseline == 'wb':
