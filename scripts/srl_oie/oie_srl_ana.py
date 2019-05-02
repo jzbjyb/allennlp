@@ -52,7 +52,7 @@ def plot_correlation(matrix, yclasses, xclasses, title, saveto):
 
 
 def read_oie_srl_parallel(filepath: str, method='') -> Tuple[List[str], List[str], List[str]]:
-    assert method in {None, 'pos_oie', 'pos_srl', 'pos_all'}
+    assert method in {'', 'pos_oie', 'pos_srl', 'pos_all'}
     srls, oies = [], []
     with open(filepath, 'r') as fin:
         for i, l in tqdm(enumerate(fin)):

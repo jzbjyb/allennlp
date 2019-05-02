@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 class CVAEEnDeCoder(Seq2SeqEncoder):
     def __init__(self,
                  token_emb_dim: int,  # the dim of the token embedding
+                 yin_emb_dim: int = None,  # the dim of the yin embedding
                  embedding_dropout: float = 0.0,
                  token_dropout: float = 0.0,  # dropout a token
                  token_proj_dim: int = None,  # the dim of projection of token embedding
@@ -32,7 +33,7 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
         self.use_x = use_x
         # "early_concat" concat x emb and y emb and feed it to all_encoder
         # "late_concat" feed x emb to x_encoder and y emb to y_encoder and concat the output
-        assert combine_method in {'early_concat', 'late_concat', 'mid_concat', 'late_add', 'only_x'}
+        assert combine_method in {'early_concat', 'late_concat', 'mid_concat', 'late_add', 'only_x', 'no_op'}
         self.combine_method = combine_method
         self.late_add_alpha = late_add_alpha
 
@@ -90,9 +91,14 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 self.input_dim = self.x_encoder.get_input_dim()
                 self.output_dim = self.x_encoder.get_output_dim()
         else:
-            assert self.yin_encoder, 'yin_encoder not specified'
-            self.input_dim = self.yin_encoder.get_input_dim()
-            self.output_dim = self.yin_encoder.get_output_dim()
+            if combine_method == 'no_op':  # directly use yin_emb
+                assert yin_emb_dim, 'yin_emb_dim not specified'
+                self.input_dim = yin_emb_dim
+                self.output_dim = yin_emb_dim
+            else:
+                assert self.yin_encoder, 'yin_encoder not specified'
+                self.input_dim = self.yin_encoder.get_input_dim()
+                self.output_dim = self.yin_encoder.get_output_dim()
 
 
     def forward(self,
@@ -145,7 +151,10 @@ class CVAEEnDeCoder(Seq2SeqEncoder):
                 enc = self.x_encoder(x_emb, mask)
         else:
             yin_emb = self.embedding_dropout(yin_emb)
-            enc = self.yin_encoder(yin_emb, mask)
+            if self.combine_method == 'no_op':
+                enc = yin_emb
+            else:
+                enc = self.yin_encoder(yin_emb, mask)
 
         return enc
 
