@@ -4,14 +4,14 @@
     "default_task": "gt",
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
-    "task_weight": {"gt": 0.5, "aw": 0.5, "srl": 1.0},
+    "task_weight": {"gt": 0.5, "neuoie": 0.5, "srl": 1.0},
     "multiple_files_sample_rate": [1, 1, 2],
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_noisy_split_rm_coor/aw/awoie.shuffle.train.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/neuoie/neuoie/neuoie_10000.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
   "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
   "test_data_path": "data/openie/conll_for_allennlp/test_split_rm_coor/oie2016.test.gold_conll",
   "model": {
@@ -28,7 +28,7 @@
     },
     "initializer": [
       [
-        "^(gt_tag_projection_layer.*weight|aw_tag_projection_layer.*weight)$", // openie tag proj layer
+        "^(gt_tag_projection_layer.*weight|neuoie_tag_projection_layer.*weight)$", // openie tag proj layer
         {
           "type": "orthogonal"
         }
@@ -52,7 +52,7 @@
         }
       ],
       [
-        "^(gt_task_encoder.*|srl_task_encoder.*|aw_task_encoder.*)$", // task encoder
+        "^(gt_task_encoder.*|srl_task_encoder.*|neuoie_task_encoder.*)$", // task encoder
         {
           "type": "pretrained",
           "weights_file_path": "/home/zhengbaj/exp/allennlp/output/srl_official_srl_small/best.th",
@@ -63,12 +63,12 @@
             "gt_task_encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_3.input_linearity.weight",
             "gt_task_encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_3.state_linearity.weight",
             "gt_task_encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_3.state_linearity.bias",
-            "aw_task_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_2.input_linearity.weight",
-            "aw_task_encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_2.state_linearity.weight",
-            "aw_task_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_2.state_linearity.bias",
-            "aw_task_encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_3.input_linearity.weight",
-            "aw_task_encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_3.state_linearity.weight",
-            "aw_task_encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_3.state_linearity.bias",
+            "neuoie_task_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_2.input_linearity.weight",
+            "neuoie_task_encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_2.state_linearity.weight",
+            "neuoie_task_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_2.state_linearity.bias",
+            "neuoie_task_encoder._module.layer_1.input_linearity.weight": "encoder._module.layer_3.input_linearity.weight",
+            "neuoie_task_encoder._module.layer_1.state_linearity.weight": "encoder._module.layer_3.state_linearity.weight",
+            "neuoie_task_encoder._module.layer_1.state_linearity.bias": "encoder._module.layer_3.state_linearity.bias",
             "srl_task_encoder._module.layer_0.input_linearity.weight": "encoder._module.layer_2.input_linearity.weight",
             "srl_task_encoder._module.layer_0.state_linearity.weight": "encoder._module.layer_2.state_linearity.weight",
             "srl_task_encoder._module.layer_0.state_linearity.bias": "encoder._module.layer_2.state_linearity.bias",
@@ -96,7 +96,7 @@
         "recurrent_dropout_probability": 0.1,
         "use_input_projection_bias": false
       },
-      "aw": {
+      "neuoie": {
         "type": "alternating_lstm",
         "input_size": 64,
         "hidden_size": 64,
@@ -116,7 +116,7 @@
     "encoder_requires_grad": true,
     "task_encoder_requires_grad": {
       "gt": true,
-      "aw": true,
+      "neuoie": true,
       "srl": true
     },
     "binary_feature_dim": 100,
@@ -147,7 +147,7 @@
     }
   },
   "vocabulary": {
-    "directory_path": "output/openie/vocab/srl_oie_aw_multitask_small/"
+    "directory_path": "output/openie/vocab/srl_oie_neuoie_multitask_small/"
   },
   "evaluate_on_test": true
 }

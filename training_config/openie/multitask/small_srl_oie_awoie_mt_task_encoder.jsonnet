@@ -11,7 +11,7 @@
     },
     "lazy": true
   },
-  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/train_noisy_split_rm_coor/gt/awoie.shuffle.train.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
+  "train_data_path": "data/openie/conll_for_allennlp/train_srl_oie_mt/oie/oie.shuffle.gold_conll:data/openie/conll_for_allennlp/neuoie/gt/neuoie_10000.shuffle.gold_conll:data/openie/conll_for_allennlp/train_srl_oie_mt/srl/ontonotes.shuffle.gold_conll",
   "validation_data_path": "data/openie/conll_for_allennlp/dev_srl_oie_mt/oie/oie.shuffle.gold_conll",
   "test_data_path": "data/openie/conll_for_allennlp/test_split_rm_coor/oie2016.test.gold_conll",
   "model": {
@@ -132,7 +132,7 @@
     }
   },
   "vocabulary": {
-    "directory_path": "output/openie/vocab/srl_oie_multitask_small/"
+    "directory_path": "output/openie/vocab/srl_oie_neuoie_no_multitask_small/"
   },
   "evaluate_on_test": true
 }
