@@ -5,27 +5,6 @@
     "multiple_files": true, // use separate files for different tasks
     "restart_file": true, // iterate between tasks uniformly
     "task_weight": {"gt": 1.0, "srl": 1.0},
-    //"srl_tag_used": ["B-ARG0", "B-ARG1", "B-ARG2", "B-ARG3", "B-ARG4", "I-ARG0", "I-ARG1", "I-ARG2", "I-ARG3", "I-ARG4", "B-V",
-    //  "B-ARGM-LOC", "B-ARGM-MNR", "B-ARGM-TMP", "I-ARGM-LOC", "I-ARGM-MNR", "I-ARGM-TMP"],
-    "srl_tag_mapping": {
-      "B-ARG0": "I-ARG0",
-      "B-ARG1": "I-ARG0",
-      "B-ARG2": "I-ARG0",
-      "B-ARG3": "I-ARG0",
-      "B-ARG4": "I-ARG0",
-      "I-ARG0": "I-ARG0",
-      "I-ARG1": "I-ARG0",
-      "I-ARG2": "I-ARG0",
-      "I-ARG3": "I-ARG0",
-      "I-ARG4": "I-ARG0",
-      "B-ARGM-LOC": "I-ARG0",
-      "B-ARGM-MNR": "I-ARG0",
-      "B-ARGM-TMP": "I-ARG0",
-      "I-ARGM-LOC": "I-ARG0",
-      "I-ARGM-MNR": "I-ARG0",
-      "I-ARGM-TMP": "I-ARG0",
-      "B-V": "B-V"
-    },
     "token_indexers": {
       "elmo": {"type": "elmo_characters"}
     },
@@ -272,7 +251,7 @@
     //  "lr": 0.1
     //},
     "optimizer": {
-      "type": "sgd",
+      "type": "adam",
       "lr": 0.0001
     }
   },

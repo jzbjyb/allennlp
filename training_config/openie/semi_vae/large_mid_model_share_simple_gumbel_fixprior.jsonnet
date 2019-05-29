@@ -19,8 +19,8 @@
     "y2_ns": "srl",
     "kl_method": "exact",
     "sample_num": 5,
-    "sample_algo": "random",
-    "infer_algo": "gumbel_softmax",
+    "sample_algo": "beam",
+    "infer_algo": "reinforce",
     "clip_reward": 10.0,
     "temperature": 1.0,
     "beta": 1.0,
@@ -97,6 +97,22 @@
         "recurrent_dropout_probability": 0.1,
         "use_input_projection_bias": false
       },
+      "yin_encoder": {
+        "type": "alternating_lstm",
+        "input_size": 300,
+        "hidden_size": 300,
+        "num_layers": 2,
+        "recurrent_dropout_probability": 0.1,
+        "use_input_projection_bias": false
+      }
+    },
+    "lang_model": {
+      "type": "cvae-endecoder",
+      "token_emb_dim": 1024,
+      "embedding_dropout": 0.0,
+      "token_dropout": 0.0,
+      "token_proj_dim": null,
+      "use_x": false,
       "yin_encoder": {
         "type": "alternating_lstm",
         "input_size": 300,
@@ -230,6 +246,24 @@
             "enc_y1_proj._module.bias": "gt_tag_projection_layer._module.bias"
           }
         }
+      ],
+      [
+        "^(lang_model\\.yin_encoder\\..*|lang_embedding\\..*|lang_proj\\..*)$",
+        {
+          "type": "pretrained",
+          "weights_file_path": "output/openie/lang_model/oie_lang/best.th",
+          "parameter_name_overrides": {
+            "lang_embedding.weight": "tag_feature_embedding.weight",
+            "lang_model.yin_encoder._module.layer_0.input_linearity.weight": "decoder.yin_encoder._module.layer_0.input_linearity.weight",
+            "lang_model.yin_encoder._module.layer_0.state_linearity.weight": "decoder.yin_encoder._module.layer_0.state_linearity.weight",
+            "lang_model.yin_encoder._module.layer_0.state_linearity.bias": "decoder.yin_encoder._module.layer_0.state_linearity.bias",
+            "lang_model.yin_encoder._module.layer_1.input_linearity.weight": "decoder.yin_encoder._module.layer_1.input_linearity.weight",
+            "lang_model.yin_encoder._module.layer_1.state_linearity.weight": "decoder.yin_encoder._module.layer_1.state_linearity.weight",
+            "lang_model.yin_encoder._module.layer_1.state_linearity.bias": "decoder.yin_encoder._module.layer_1.state_linearity.bias",
+            "lang_proj._module.weight": "tag_projection_layer._module.weight",
+            "lang_proj._module.bias": "tag_projection_layer._module.bias"
+          }
+        }
       ]
     ],
     "regularizer": [[".*scalar_parameters.*", {"type": "l2", "alpha": 0.001}]]
@@ -260,7 +294,7 @@
     //},
     "optimizer": {
       "type": "adam",
-      "lr": 0.001
+      "lr": 0.0001
     }
   },
   "vocabulary": {
